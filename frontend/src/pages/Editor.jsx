@@ -50,11 +50,22 @@ export default function EditorPage() {
       setFileName(def)
       // Load preview for current version
       try {
-        const res = await api.get(`/documents/${id}/download/?format=pdf`, { responseType: 'blob' })
+        const res = await api.get(`/documents/${id}/download/?fmt=pdf`, { responseType: 'blob' })
         const url = URL.createObjectURL(res.data)
         setPreviewUrl((prev) => { try { if (prev) URL.revokeObjectURL(prev) } catch(_){}; return url })
         toast.info('Preview loaded')
       } catch (_) { /* ignore preview error */ }
+      // Restore any draft from sessionStorage
+      try {
+        const raw = sessionStorage.getItem(`draft:doc:${id}`)
+        if (raw) {
+          const draft = JSON.parse(raw)
+          if (draft?.text) {
+            if (editor) editor.commands.setContent(textToHtml(draft.text))
+          }
+          if (draft?.fileName) setFileName(draft.fileName)
+        }
+      } catch (_) {}
     } catch (e) {
       if (e?.response?.status === 401) { navigate('/login'); return }
       setError(e?.response?.data?.detail || 'Failed to load document')
@@ -81,7 +92,7 @@ export default function EditorPage() {
       // Navigate to the new document version
       if (doPreview) {
         try {
-          const res = await api.get(`/documents/${saved.id}/download/?format=pdf`, { responseType: 'blob' })
+          const res = await api.get(`/documents/${saved.id}/download/?fmt=pdf`, { responseType: 'blob' })
           const url = URL.createObjectURL(res.data)
           setPreviewUrl((prev) => { try { if (prev) URL.revokeObjectURL(prev) } catch(_){}; return url })
         } catch (_) {}
@@ -97,7 +108,7 @@ export default function EditorPage() {
   const download = async (format) => {
     if (!doc) return
     try {
-      const res = await api.get(`/documents/${doc.id}/download/${format ? `?format=${format}` : ''}`, { responseType: 'blob' })
+      const res = await api.get(`/documents/${doc.id}/download/${format ? `?fmt=${format}` : ''}`, { responseType: 'blob' })
       const url = window.URL.createObjectURL(new Blob([res.data]))
       const link = document.createElement('a')
       link.href = url
@@ -107,6 +118,25 @@ export default function EditorPage() {
       toast.success(`${format ? format.toUpperCase() : 'TXT'} downloaded`)
     } catch (_) { toast.error('Download failed') }
   }
+
+  // Auto-save draft to sessionStorage whenever content or fileName changes
+  useEffect(() => {
+    if (!editor) return
+    const key = `draft:doc:${id}`
+    const handler = () => {
+      try {
+        const text = htmlToText(editor.getHTML())
+        sessionStorage.setItem(key, JSON.stringify({ text, fileName }))
+      } catch (_) {}
+    }
+    editor.on('update', handler)
+    return () => {
+      try {
+        handler()
+        editor.off('update', handler)
+      } catch (_) {}
+    }
+  }, [editor, id, fileName])
 
   return (
     <div style={{ maxWidth: 1100, margin: '24px auto', display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 16 }}>
@@ -145,6 +175,12 @@ export default function EditorPage() {
           >
             U
           </button>
+          <button onClick={() => editor && editor.chain().focus().toggleHeading({ level: 1 }).run()} disabled={!editor} style={{ padding: '4px 8px' }}>H1</button>
+          <button onClick={() => editor && editor.chain().focus().toggleHeading({ level: 2 }).run()} disabled={!editor} style={{ padding: '4px 8px' }}>H2</button>
+          <button onClick={() => editor && editor.chain().focus().toggleBulletList().run()} disabled={!editor} style={{ padding: '4px 8px' }}>• List</button>
+          <button onClick={() => editor && editor.chain().focus().toggleOrderedList().run()} disabled={!editor} style={{ padding: '4px 8px' }}>1. List</button>
+          <button onClick={() => editor && editor.chain().focus().undo().run()} disabled={!editor} style={{ padding: '4px 8px' }}>Undo</button>
+          <button onClick={() => editor && editor.chain().focus().redo().run()} disabled={!editor} style={{ padding: '4px 8px' }}>Redo</button>
           <label style={{ marginLeft: 8, color: '#555' }}>Font:</label>
           <select
             onChange={(e) => {

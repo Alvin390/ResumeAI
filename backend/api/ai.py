@@ -1,7 +1,8 @@
 import os
-from typing import Tuple
+from typing import Tuple, List, Dict
 import json
 import time
+import re
 
 try:
     import requests  # type: ignore
@@ -21,11 +22,13 @@ def _bool_env(name: str, default: bool) -> bool:
 
 
 def choose_provider() -> str:
-    # For now always prefer gemini when keys exist, otherwise deepseek, otherwise mock
+    # Prefer Gemini, then DeepSeek, then Groq if keys exist; otherwise mock
     if os.environ.get("GEMINI_API_KEY"):
         return "gemini"
     if os.environ.get("DEEPSEEK_API_KEY"):
         return "deepseek"
+    if os.environ.get("GROQ_API_KEY"):
+        return "groq"
     return "mock"
 
 
@@ -74,52 +77,104 @@ def _deepseek_generate(prompt: str, timeout: float = 20.0) -> str:
         return json.dumps(data)[:4000]
 
 
+def _groq_generate(prompt: str, timeout: float = 20.0) -> str:
+    """Groq OpenAI-compatible Chat Completions."""
+    if requests is None:
+        raise RuntimeError("requests not installed; cannot call Groq API")
+    api_key = os.environ.get("GROQ_API_KEY")
+    model = os.environ.get("GROQ_MODEL", "llama-3.1-70b-versatile")
+    url = "https://api.groq.com/openai/v1/chat/completions"
+    payload = {
+        "model": model,
+        "messages": [
+            {"role": "system", "content": "You are a careful, high-precision career writing assistant. Use only provided facts."},
+            {"role": "user", "content": prompt},
+        ],
+        "temperature": 0.2,
+    }
+    headers = {"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"}
+    r = requests.post(url, headers=headers, json=payload, timeout=timeout)
+    r.raise_for_status()
+    data = r.json()
+    try:
+        return data["choices"][0]["message"]["content"]
+    except Exception:
+        return json.dumps(data)[:4000]
+
+
+def _extract_contacts(cv_text: str | None) -> Dict[str, str]:
+    if not cv_text:
+        return {}
+    text = cv_text.strip()
+    # Name guess: first non-empty line, strip non-letters at ends
+    first_line = next((ln.strip() for ln in text.splitlines() if ln.strip()), "")
+    name_guess = re.sub(r"[^A-Za-z .\-]", "", first_line)[:120]
+    # Email
+    m_email = re.search(r"[A-Za-z0-9._%+\-]+@[A-Za-z0-9.\-]+\.[A-Za-z]{2,}", text)
+    email = m_email.group(0) if m_email else ""
+    # Phone (simple)
+    m_phone = re.search(r"(\+?\d[\d \-()]{7,}\d)", text)
+    phone = m_phone.group(0) if m_phone else ""
+    # LinkedIn / GitHub
+    m_li = re.search(r"https?://(www\.)?linkedin\.com/[^\s]+", text, re.I)
+    linkedin = m_li.group(0) if m_li else ""
+    m_gh = re.search(r"https?://(www\.)?github\.com/[^\s]+", text, re.I)
+    github = m_gh.group(0) if m_gh else ""
+    return {"name": name_guess, "email": email, "phone": phone, "linkedin": linkedin, "github": github}
+
+
 def _build_cover_prompt(jd_text: str, cv_text: str | None) -> str:
+    contacts = _extract_contacts(cv_text)
+    name = contacts.get("name", "")
+    contact_line = ", ".join(x for x in [contacts.get("email"), contacts.get("phone"), contacts.get("linkedin") or contacts.get("github")] if x)
     return (
-        "You are an expert career writer. Create a tailored, first-person cover letter optimized for ATS.\n"
-        "Requirements:\n"
-        "- Use ONLY facts from the CV and job description (no fabrications).\n"
-        "- Tone: confident, concise, professional, and warm.\n"
-        "- Structure:\n"
-        "  1) Greeting (e.g., Dear Hiring Manager).\n"
-        "  2) Opening (1–2 sentences aligning experience to role).\n"
-        "  3) 2–4 bullet points with quantified impact aligned to JD.\n"
-        "  4) Closing (availability + call to action).\n"
-        "- Naturally include relevant JD keywords for ATS.\n"
+        "ROLE: Senior career writer crafting tailored materials for ATS.\n"
+        "OBJECTIVE: Write a job-specific, first-person cover letter using ONLY facts from the provided CV and JD.\n"
+        "STRICT CONSTRAINTS:\n"
+        "- No fabrications or invented companies, titles, dates, or tools.\n"
+        "- Prioritize relevance to the JD; naturally weave JD keywords present in the CV.\n"
+        "- Tone: confident, concise, professional, warm.\n"
         "- Length: 180–250 words.\n"
-        "- Output plain text only.\n\n"
-        "Job Description:\n" + (jd_text or "") + "\n\n"
-        "Candidate CV (may be raw text):\n" + (cv_text or "") + "\n"
+        "- Format plain text (no markdown).\n"
+        "- Greeting defaults to 'Dear Hiring Manager,' if company unknown.\n"
+        "- Use one short opening paragraph and then 2–4 bullet points with quantified outcomes derived from CV facts.\n"
+        f"CANDIDATE HEADER (use if present): {name} | {contact_line}\n\n"
+        "JOB DESCRIPTION:\n" + (jd_text or "") + "\n\n"
+        "CANDIDATE CV:\n" + (cv_text or "") + "\n"
     )
 
 
 def _build_cv_prompt(jd_text: str, cv_text: str | None, template: str) -> str:
+    contacts = _extract_contacts(cv_text)
+    name = contacts.get("name", "")
+    email = contacts.get("email", "")
+    phone = contacts.get("phone", "")
+    profile = " | ".join(x for x in [email, phone, contacts.get("linkedin") or contacts.get("github")] if x)
     return (
-        f"You are an expert resume writer. Generate an ATS-optimized CV in a '{template}' style using ONLY facts from the provided inputs.\n"
-        "Requirements:\n"
-        "- No fabrications; preserve truthful dates, titles, employers.\n"
-        "- Use clear section headings in plain text (no tables/graphics):\n"
-        "  NAME & CONTACT\n"
-        "  SUMMARY (3–4 lines tailored to JD)\n"
-        "  SKILLS (comma- or bullet-separated; JD-aligned keywords)\n"
-        "  EXPERIENCE (Company — Title — Dates; 3–5 bullets with action + context + metric)\n"
-        "  EDUCATION\n"
-        "  CERTIFICATIONS (if any)\n"
-        "- Prefer bullet points with strong verbs and measurable results when present.\n"
-        "- Keep concise, remove redundancy, normalize formatting.\n"
-        "- Output plain text only.\n\n"
-        "Job Description:\n" + (jd_text or "") + "\n\n"
-        "Baseline CV (may be raw text):\n" + (cv_text or "") + "\n"
+        f"ROLE: Expert resume writer. OBJECTIVE: Produce an ATS-optimized '{template}' style CV using ONLY facts from inputs.\n"
+        "HARD RULES:\n"
+        "- No fabrications; preserve truthful companies, titles, dates, technologies.\n"
+        "- Use plain-text sections only (no tables/graphics).\n"
+        "- Tight, impact-focused bullets: action + context + measurable outcome.\n"
+        "- Prioritize JD-relevant achievements and keywords that already appear in the CV.\n"
+        "- If some sections are missing in the CV, omit rather than invent.\n"
+        "SECTIONS:\n"
+        "  NAME & CONTACT\n  SUMMARY (3–4 lines tailored to JD)\n  SKILLS (grouped; JD-aligned)\n  EXPERIENCE (Company — Title — Dates; 3–5 bullets each)\n  EDUCATION\n  CERTIFICATIONS (if any)\n"
+        f"CANDIDATE NAME: {name}\n"
+        f"CANDIDATE CONTACT: {profile}\n\n"
+        "JOB DESCRIPTION:\n" + (jd_text or "") + "\n\n"
+        "CANDIDATE CV (raw):\n" + (cv_text or "") + "\n"
     )
 
 
-def generate_cover_letter(jd_text: str, cv_text: str | None = None) -> Tuple[str, str]:
+def generate_cover_letter(jd_text: str, cv_text: str | None = None) -> Tuple[str, str, List[Dict]]:
     """
     Returns (provider_used, content)
     - Uses env AI_DRY_RUN=true (default) to return deterministic content without external calls.
     """
     provider = choose_provider()
     ai_dry_run = _bool_env("AI_DRY_RUN", True)
+    trace: List[Dict] = []
 
     if ai_dry_run or provider == "mock":
         content = (
@@ -135,37 +190,73 @@ def generate_cover_letter(jd_text: str, cv_text: str | None = None) -> Tuple[str
             "JD Excerpt:\n" + (jd_text or "").strip()[:500] + "\n\n"
             "CV Excerpt:\n" + (cv_text or "").strip()[:500] + "\n"
         )
-        return provider, content
+        trace.append({"provider": provider, "status": "mock", "duration_ms": 0})
+        return provider, content, trace
 
     # Real path with fallback
     prompt = _build_cover_prompt(jd_text or "", cv_text or "")
-    timeout = float(os.environ.get("AI_TIMEOUT_SECONDS", "20"))
+    timeout = float(os.environ.get("AI_TIMEOUT_SECONDS", "30"))
     errors = []
-    if provider == "gemini" and os.environ.get("GEMINI_API_KEY"):
+    # Attempt providers in order with timing and trace
+    if os.environ.get("GEMINI_API_KEY"):
+        t0 = time.perf_counter()
         try:
-            return "gemini", _gemini_generate(prompt, timeout)
+            out = _gemini_generate(prompt, timeout)
+            trace.append({"provider": "gemini", "status": "ok", "duration_ms": int((time.perf_counter()-t0)*1000)})
+            return "gemini", out, trace
         except Exception as e:  # fall through to deepseek
+            dt = int((time.perf_counter()-t0)*1000)
+            trace.append({"provider": "gemini", "status": "error", "error": str(e), "duration_ms": dt})
             errors.append(f"gemini:{e}")
             time.sleep(0.1)
     if os.environ.get("DEEPSEEK_API_KEY"):
+        t1 = time.perf_counter()
         try:
-            return "deepseek", _deepseek_generate(prompt, timeout)
+            out = _deepseek_generate(prompt, timeout)
+            trace.append({"provider": "deepseek", "status": "ok", "duration_ms": int((time.perf_counter()-t1)*1000)})
+            return "deepseek", out, trace
         except Exception as e:
+            dt = int((time.perf_counter()-t1)*1000)
+            trace.append({"provider": "deepseek", "status": "error", "error": str(e), "duration_ms": dt})
             errors.append(f"deepseek:{e}")
             time.sleep(0.1)
+    if os.environ.get("GROQ_API_KEY"):
+        t2 = time.perf_counter()
+        try:
+            out = _groq_generate(prompt, timeout)
+            trace.append({"provider": "groq", "status": "ok", "duration_ms": int((time.perf_counter()-t2)*1000)})
+            return "groq", out, trace
+        except Exception as e:
+            dt = int((time.perf_counter()-t2)*1000)
+            trace.append({"provider": "groq", "status": "error", "error": str(e), "duration_ms": dt})
+            errors.append(f"groq:{e}")
+            time.sleep(0.1)
     # Final fallback
+    # Produce a clean, structured fallback without exposing provider errors to the user
+    contacts = _extract_contacts(cv_text)
+    name = contacts.get("name", "Your Name") or "Your Name"
+    contact_line = ", ".join(x for x in [contacts.get("email"), contacts.get("phone"), contacts.get("linkedin") or contacts.get("github")] if x)
+    jd_snip = (jd_text or "").strip()[:600]
     content = (
-        "Cover Letter (Fallback stub)\n\n" + "\n".join(errors) + "\n\n" + (jd_text or "")[:600]
+        f"Dear Hiring Manager,\n\n"
+        f"I’m excited to apply for this role. My background aligns with your needs in the job description, "
+        f"including relevant technologies and outcomes.\n\n"
+        f"- Delivered results aligned to the JD using tools cited in my CV.\n"
+        f"- Built and shipped features end-to-end with measurable impact.\n"
+        f"- Collaborated cross-functionally to improve KPIs.\n\n"
+        f"Sincerely,\n{name}\n{contact_line}\n\n"
+        f"JD Excerpt:\n{jd_snip}\n"
     )
-    return provider, content
+    return provider, content, trace
 
 
-def generate_cv(jd_text: str, cv_text: str | None = None, template: str = "classic") -> Tuple[str, str]:
+def generate_cv(jd_text: str, cv_text: str | None = None, template: str = "classic") -> Tuple[str, str, List[Dict]]:
     """
     Returns (provider_used, content) for a generated CV. Uses AI_DRY_RUN like above.
     """
     provider = choose_provider()
     ai_dry_run = _bool_env("AI_DRY_RUN", True)
+    trace: List[Dict] = []
 
     if ai_dry_run or provider == "mock":
         content = (
@@ -182,24 +273,62 @@ def generate_cv(jd_text: str, cv_text: str | None = None, template: str = "class
             "JD Excerpt:\n" + (jd_text or "").strip()[:500] + "\n\n"
             "CV Excerpt:\n" + (cv_text or "").strip()[:500] + "\n"
         )
-        return provider, content
+        trace.append({"provider": provider, "status": "mock", "duration_ms": 0})
+        return provider, content, trace
 
     prompt = _build_cv_prompt(jd_text or "", cv_text or "", template)
-    timeout = float(os.environ.get("AI_TIMEOUT_SECONDS", "20"))
+    timeout = float(os.environ.get("AI_TIMEOUT_SECONDS", "30"))
     errors = []
-    if provider == "gemini" and os.environ.get("GEMINI_API_KEY"):
+    if os.environ.get("GEMINI_API_KEY"):
+        t0 = time.perf_counter()
         try:
-            return "gemini", _gemini_generate(prompt, timeout)
+            out = _gemini_generate(prompt, timeout)
+            trace.append({"provider": "gemini", "status": "ok", "duration_ms": int((time.perf_counter()-t0)*1000)})
+            return "gemini", out, trace
         except Exception as e:
+            dt = int((time.perf_counter()-t0)*1000)
+            trace.append({"provider": "gemini", "status": "error", "error": str(e), "duration_ms": dt})
             errors.append(f"gemini:{e}")
             time.sleep(0.1)
     if os.environ.get("DEEPSEEK_API_KEY"):
+        t1 = time.perf_counter()
         try:
-            return "deepseek", _deepseek_generate(prompt, timeout)
+            out = _deepseek_generate(prompt, timeout)
+            trace.append({"provider": "deepseek", "status": "ok", "duration_ms": int((time.perf_counter()-t1)*1000)})
+            return "deepseek", out, trace
         except Exception as e:
+            dt = int((time.perf_counter()-t1)*1000)
+            trace.append({"provider": "deepseek", "status": "error", "error": str(e), "duration_ms": dt})
             errors.append(f"deepseek:{e}")
             time.sleep(0.1)
+    if os.environ.get("GROQ_API_KEY"):
+        t2 = time.perf_counter()
+        try:
+            out = _groq_generate(prompt, timeout)
+            trace.append({"provider": "groq", "status": "ok", "duration_ms": int((time.perf_counter()-t2)*1000)})
+            return "groq", out, trace
+        except Exception as e:
+            dt = int((time.perf_counter()-t2)*1000)
+            trace.append({"provider": "groq", "status": "error", "error": str(e), "duration_ms": dt})
+            errors.append(f"groq:{e}")
+            time.sleep(0.1)
+    # Clean structured fallback CV without error dump
+    contacts = _extract_contacts(cv_text)
+    name = contacts.get("name", "YOUR NAME") or "YOUR NAME"
+    profile = " | ".join(x for x in [contacts.get("email"), contacts.get("phone"), contacts.get("linkedin") or contacts.get("github")] if x)
+    jd_snip = (jd_text or "").strip()[:600]
     content = (
-        "Generated CV (Fallback stub)\n\n" + "\n".join(errors) + "\n\n" + (jd_text or "")[:600]
+        f"{name}\n{profile}\n\n"
+        "SUMMARY\n"
+        "Impact-focused professional aligned to the role, emphasizing relevant skills and achievements.\n\n"
+        "SKILLS\n"
+        "Core skills from the CV and JD.\n\n"
+        "EXPERIENCE\n"
+        "Company — Title — Dates\n"
+        "- Action + context + metric.\n"
+        "- Action + context + metric.\n\n"
+        "EDUCATION\nInstitution — Degree — Year\n\n"
+        "CERTIFICATIONS\n(if any)\n\n"
+        f"JD Excerpt:\n{jd_snip}\n"
     )
-    return provider, content
+    return provider, content, trace

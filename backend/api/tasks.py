@@ -46,7 +46,7 @@ def generate_documents(self, generation_job_id: int):
             if job.job_type in (GenerationJob.TYPE_BOTH, GenerationJob.TYPE_COVER):
                 import time as _t
                 t0 = _t.perf_counter()
-                provider, cover_text = ai.generate_cover_letter(jd_text=jd_text, cv_text=cv_text)
+                provider, cover_text, attempts = ai.generate_cover_letter(jd_text=jd_text, cv_text=cv_text)
                 dt_ms = int((_t.perf_counter() - t0) * 1000)
                 cover = Document.objects.create(
                     user=user,
@@ -58,6 +58,11 @@ def generate_documents(self, generation_job_id: int):
                 )
                 job.result_cover_letter = cover
                 job.logs += f"[{timezone.now()}] Cover letter generated via {provider} in {dt_ms}ms\n"
+                for att in attempts or []:
+                    job.logs += (
+                        f"[{timezone.now()}] Cover attempt provider={att.get('provider')} status={att.get('status')} "
+                        f"duration={att.get('duration_ms')}ms error={att.get('error','')}\n"
+                    )
                 try:
                     AuditLog.objects.create(
                         user=user,
@@ -66,7 +71,7 @@ def generate_documents(self, generation_job_id: int):
                         path=f"/api/generations/{job.id}/",
                         method="CELERY",
                         status_code=200,
-                        extra={"provider": provider, "duration_ms": dt_ms, "job_id": job.id},
+                        extra={"provider": provider, "duration_ms": dt_ms, "job_id": job.id, "attempts": attempts},
                     )
                 except Exception:
                     pass
@@ -75,7 +80,7 @@ def generate_documents(self, generation_job_id: int):
             if job.job_type in (GenerationJob.TYPE_BOTH, GenerationJob.TYPE_CV):
                 import time as _t
                 t1 = _t.perf_counter()
-                provider2, gcv_text = ai.generate_cv(jd_text=jd_text, cv_text=cv_text, template=job.template)
+                provider2, gcv_text, attempts2 = ai.generate_cv(jd_text=jd_text, cv_text=cv_text, template=job.template)
                 dt2_ms = int((_t.perf_counter() - t1) * 1000)
                 gcv = Document.objects.create(
                     user=user,
@@ -87,6 +92,11 @@ def generate_documents(self, generation_job_id: int):
                 )
                 job.result_generated_cv = gcv
                 job.logs += f"[{timezone.now()}] Generated CV via {provider2} in {dt2_ms}ms\n"
+                for att in attempts2 or []:
+                    job.logs += (
+                        f"[{timezone.now()}] CV attempt provider={att.get('provider')} status={att.get('status')} "
+                        f"duration={att.get('duration_ms')}ms error={att.get('error','')}\n"
+                    )
                 try:
                     AuditLog.objects.create(
                         user=user,
@@ -95,7 +105,7 @@ def generate_documents(self, generation_job_id: int):
                         path=f"/api/generations/{job.id}/",
                         method="CELERY",
                         status_code=200,
-                        extra={"provider": provider2, "duration_ms": dt2_ms, "job_id": job.id, "template": job.template},
+                        extra={"provider": provider2, "duration_ms": dt2_ms, "job_id": job.id, "template": job.template, "attempts": attempts2},
                     )
                 except Exception:
                     pass

@@ -35,6 +35,16 @@ export default function Generate() {
           toast.error('Failed to load CV list')
         }
       })
+    // Restore last result if present
+    try {
+      const raw = sessionStorage.getItem('gen:last')
+      if (raw) {
+        const parsed = JSON.parse(raw)
+        if (parsed?.jobId) setJobId(parsed.jobId)
+        if (parsed?.result) setResult(parsed.result)
+        if (parsed?.status) setStatus(parsed.status)
+      }
+    } catch (_) {}
   }, [])
 
   useEffect(() => {
@@ -53,6 +63,12 @@ export default function Generate() {
             cover_id: data.result_cover_letter || null,
             cv_id: data.result_generated_cv || null,
           })
+          try {
+            sessionStorage.setItem('gen:last', JSON.stringify({ jobId, status: data.status, result: {
+              cover_id: data.result_cover_letter || null,
+              cv_id: data.result_generated_cv || null,
+            }}))
+          } catch (_) {}
           if (data.status === 'error') {
             toast.error('Generation failed, check logs')
           } else {
@@ -93,6 +109,7 @@ export default function Generate() {
       setJobId(gen.id)
       setStatus(gen.status)
       console.log('[Generate] Generation job created id=', gen.id, 'status=', gen.status)
+      try { sessionStorage.setItem('gen:last', JSON.stringify({ jobId: gen.id, status: gen.status, result: { cover_id: null, cv_id: null } })) } catch (_) {}
       toast.info('Generation started')
     } catch (err) {
       if (err?.response?.status === 401) {
@@ -164,7 +181,7 @@ export default function Generate() {
                     }}>TXT</button>
                     <button onClick={async () => {
                       try {
-                        const res = await api.get(`/documents/${result.cover_id}/download/?format=docx`, { responseType: 'blob' })
+                        const res = await api.get(`/documents/${result.cover_id}/download/?fmt=docx`, { responseType: 'blob' })
                         const url = window.URL.createObjectURL(new Blob([res.data]))
                         const link = document.createElement('a')
                         link.href = url
@@ -175,7 +192,7 @@ export default function Generate() {
                     }}>DOCX</button>
                     <button onClick={async () => {
                       try {
-                        const res = await api.get(`/documents/${result.cover_id}/download/?format=pdf`, { responseType: 'blob' })
+                        const res = await api.get(`/documents/${result.cover_id}/download/?fmt=pdf`, { responseType: 'blob' })
                         const url = window.URL.createObjectURL(new Blob([res.data]))
                         const link = document.createElement('a')
                         link.href = url
@@ -205,7 +222,7 @@ export default function Generate() {
                     }}>TXT</button>
                     <button onClick={async () => {
                       try {
-                        const res = await api.get(`/documents/${result.cv_id}/download/?format=docx`, { responseType: 'blob' })
+                        const res = await api.get(`/documents/${result.cv_id}/download/?fmt=docx`, { responseType: 'blob' })
                         const url = window.URL.createObjectURL(new Blob([res.data]))
                         const link = document.createElement('a')
                         link.href = url
@@ -216,7 +233,7 @@ export default function Generate() {
                     }}>DOCX</button>
                     <button onClick={async () => {
                       try {
-                        const res = await api.get(`/documents/${result.cv_id}/download/?format=pdf`, { responseType: 'blob' })
+                        const res = await api.get(`/documents/${result.cv_id}/download/?fmt=pdf`, { responseType: 'blob' })
                         const url = window.URL.createObjectURL(new Blob([res.data]))
                         const link = document.createElement('a')
                         link.href = url
