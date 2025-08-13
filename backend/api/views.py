@@ -86,7 +86,12 @@ class DocumentListCreateView(APIView):
     permission_classes = [permissions.IsAuthenticated]
     parser_classes = [MultiPartParser, FormParser]
     def get(self, request):
-        docs = Document.objects.filter(user=request.user, doc_type=Document.TYPE_CV).order_by("-created_at")
+        dt = (request.query_params.get("doc_type") or "cv").strip().lower()
+        if dt == "cover":
+            dtype = Document.TYPE_COVER
+        else:
+            dtype = Document.TYPE_CV
+        docs = Document.objects.filter(user=request.user, doc_type=dtype).order_by("-created_at")
         return Response(DocumentSerializer(docs, many=True).data)
 
     def post(self, request):
@@ -147,8 +152,32 @@ class DocumentDownloadView(APIView):
         try:
             doc = Document.objects.get(id=pk, user=request.user)
         except Document.DoesNotExist:
+            try:
+                AuditLog.objects.create(
+                    user=request.user,
+                    category="documents",
+                    action="document_download_not_found",
+                    path=request.path,
+                    method=request.method,
+                    status_code=404,
+                    extra={"doc_id": pk, "fmt": request.query_params.get("format") or request.query_params.get("fmt")},
+                )
+            except Exception:
+                pass
             return Response({"detail": "Not found"}, status=status.HTTP_404_NOT_FOUND)
         fmt = request.query_params.get("format") or request.query_params.get("fmt")
+        try:
+            AuditLog.objects.create(
+                user=request.user,
+                category="documents",
+                action="document_download_request",
+                path=request.path,
+                method=request.method,
+                status_code=200,
+                extra={"doc_id": doc.id, "fmt": fmt, "content_type": doc.content_type, "file_name": doc.file_name},
+            )
+        except Exception:
+            pass
         # On-the-fly conversion for common text-based documents
         if fmt in ("docx", "pdf"):
             # If the stored document already matches the requested format, just return it.
@@ -158,11 +187,35 @@ class DocumentDownloadView(APIView):
                 resp = HttpResponse(bytes(doc.file_blob), content_type="application/pdf")
                 safe_name = (doc.file_name or "document").replace("\"", "")
                 resp["Content-Disposition"] = f"attachment; filename=\"{safe_name}\""
+                try:
+                    AuditLog.objects.create(
+                        user=request.user,
+                        category="documents",
+                        action="document_download_serve_original",
+                        path=request.path,
+                        method=request.method,
+                        status_code=200,
+                        extra={"doc_id": doc.id, "fmt": fmt, "served": "pdf"},
+                    )
+                except Exception:
+                    pass
                 return resp
             if fmt == "docx" and (ct == "application/vnd.openxmlformats-officedocument.wordprocessingml.document" or fn.endswith(".docx")):
                 resp = HttpResponse(bytes(doc.file_blob), content_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document")
                 safe_name = (doc.file_name or "document").replace("\"", "")
                 resp["Content-Disposition"] = f"attachment; filename=\"{safe_name}\""
+                try:
+                    AuditLog.objects.create(
+                        user=request.user,
+                        category="documents",
+                        action="document_download_serve_original",
+                        path=request.path,
+                        method=request.method,
+                        status_code=200,
+                        extra={"doc_id": doc.id, "fmt": fmt, "served": "docx"},
+                    )
+                except Exception:
+                    pass
                 return resp
             # Only attempt conversion if we have text-like content
             text = None
@@ -172,6 +225,18 @@ class DocumentDownloadView(APIView):
             except Exception:
                 text = None
             if text is None:
+                try:
+                    AuditLog.objects.create(
+                        user=request.user,
+                        category="documents",
+                        action="document_download_convert_unsupported",
+                        path=request.path,
+                        method=request.method,
+                        status_code=400,
+                        extra={"doc_id": doc.id, "fmt": fmt, "content_type": doc.content_type},
+                    )
+                except Exception:
+                    pass
                 return Response({"detail": "Conversion only supported for text/* documents"}, status=status.HTTP_400_BAD_REQUEST)
             base_name = (doc.file_name.rsplit(".", 1)[0] or "document").replace("\"", "")
             if fmt == "docx":
@@ -187,6 +252,18 @@ class DocumentDownloadView(APIView):
                 buf.seek(0)
                 resp = HttpResponse(buf.getvalue(), content_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document")
                 resp["Content-Disposition"] = f"attachment; filename=\"{base_name}.docx\""
+                try:
+                    AuditLog.objects.create(
+                        user=request.user,
+                        category="documents",
+                        action="document_download_converted_docx",
+                        path=request.path,
+                        method=request.method,
+                        status_code=200,
+                        extra={"doc_id": doc.id},
+                    )
+                except Exception:
+                    pass
                 return resp
             if fmt == "pdf":
                 try:
@@ -198,21 +275,78 @@ class DocumentDownloadView(APIView):
                 pdf.add_page()
                 # Use a core font available by default
                 pdf.set_font("Helvetica", size=12)
-                for line in text.splitlines() or [""]:
-                    pdf.multi_cell(0, 8, line)
                 try:
-                    pdf_bytes = pdf.output(dest="S").encode("latin1", errors="ignore")
-                except Exception:
-                    # Fallback to file-like
-                    buf = io.BytesIO()
-                    pdf.output(buf)
-                    pdf_bytes = buf.getvalue()
-                resp = HttpResponse(pdf_bytes, content_type="application/pdf")
-                resp["Content-Disposition"] = f"attachment; filename=\"{base_name}.pdf\""
-                return resp
+                    for raw in text.splitlines() or [""]:
+                        # Sanitize to latin-1 to avoid FPDF unicode write errors
+                        line = raw.replace("\t", "    ")
+                        safe = line.encode("latin1", "ignore").decode("latin1")
+                        pdf.multi_cell(0, 8, safe)
+                    try:
+                        pdf_bytes = pdf.output(dest="S").encode("latin1", errors="ignore")
+                    except Exception:
+                        # Fallback to file-like
+                        buf = io.BytesIO()
+                        pdf.output(buf)
+                        pdf_bytes = buf.getvalue()
+                    resp = HttpResponse(pdf_bytes, content_type="application/pdf")
+                    resp["Content-Disposition"] = f"attachment; filename=\"{base_name}.pdf\""
+                    try:
+                        AuditLog.objects.create(
+                            user=request.user,
+                            category="documents",
+                            action="document_download_converted_pdf",
+                            path=request.path,
+                            method=request.method,
+                            status_code=200,
+                            extra={"doc_id": doc.id},
+                        )
+                    except Exception:
+                        pass
+                    return resp
+                except Exception as e:
+                    # Log error and attempt a single sanitized dump
+                    try:
+                        AuditLog.objects.create(
+                            user=request.user,
+                            category="documents",
+                            action="document_download_pdf_error",
+                            path=request.path,
+                            method=request.method,
+                            status_code=500,
+                            extra={"doc_id": doc.id, "error": str(e)},
+                        )
+                    except Exception:
+                        pass
+                    try:
+                        pdf = FPDF()
+                        pdf.set_auto_page_break(True, margin=15)
+                        pdf.add_page()
+                        pdf.set_font("Helvetica", size=12)
+                        sanitized = text.encode("latin1", "ignore").decode("latin1")
+                        pdf.multi_cell(0, 8, sanitized)
+                        buf = io.BytesIO()
+                        pdf.output(buf)
+                        pdf_bytes = buf.getvalue()
+                        resp = HttpResponse(pdf_bytes, content_type="application/pdf")
+                        resp["Content-Disposition"] = f"attachment; filename=\"{base_name}.pdf\""
+                        return resp
+                    except Exception as e2:
+                        return Response({"detail": f"PDF generation failed: {e2}"}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
         # Default: return stored blob
         resp = HttpResponse(bytes(doc.file_blob), content_type=doc.content_type)
         resp["Content-Disposition"] = f"attachment; filename=\"{doc.file_name}\""
+        try:
+            AuditLog.objects.create(
+                user=request.user,
+                category="documents",
+                action="document_download_serve_raw",
+                path=request.path,
+                method=request.method,
+                status_code=200,
+                extra={"doc_id": doc.id, "content_type": doc.content_type, "file_name": doc.file_name},
+            )
+        except Exception:
+            pass
         return resp
 
 

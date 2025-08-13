@@ -1,10 +1,11 @@
 import React, { useEffect, useState } from 'react'
-import { Routes, Route, Link, useNavigate } from 'react-router-dom'
+import { Routes, Route, Link, useNavigate, Navigate } from 'react-router-dom'
 import api from './services/api'
 import Login from './pages/Login.jsx'
 import Profile from './pages/Profile.jsx'
 import Generate from './pages/Generate.jsx'
 import Editor from './pages/Editor.jsx'
+import Documents from './pages/Documents.jsx'
 
 function Home() {
   return (
@@ -18,8 +19,13 @@ function Home() {
 function Dashboard() {
   const navigate = useNavigate()
   const logout = () => {
-    localStorage.removeItem('access'); localStorage.removeItem('refresh');
-    navigate('/login')
+    try { api.logout() } catch(_) {}
+    // Force a full reload to clear any in-memory app state
+    if (typeof window !== 'undefined' && window.location) {
+      window.location.replace('/login')
+    } else {
+      navigate('/login')
+    }
   }
   return (
     <div>
@@ -30,21 +36,40 @@ function Dashboard() {
   )
 }
 
+function RequireAuth({ children }) {
+  const hasJwt = !!(localStorage.getItem('access') || localStorage.getItem('token_key'))
+  if (!hasJwt) {
+    return <Navigate to="/login" replace />
+  }
+  return children
+}
+
 export default function App() {
   const [status, setStatus] = useState('loading...')
+  const [authed, setAuthed] = useState(() => !!(localStorage.getItem('access') || localStorage.getItem('token_key')))
   useEffect(() => {
     api.get('/health/').then(r => setStatus(r.data.status)).catch(() => setStatus('error'))
+  }, [])
+  useEffect(() => {
+    const sync = () => setAuthed(!!(localStorage.getItem('access') || localStorage.getItem('token_key')))
+    window.addEventListener('storage', sync)
+    window.addEventListener('auth-changed', sync)
+    return () => {
+      window.removeEventListener('storage', sync)
+      window.removeEventListener('auth-changed', sync)
+    }
   }, [])
   return (
     <div style={{fontFamily:'sans-serif', padding: 24}}>
       <header style={{display:'flex', gap:12, alignItems:'center'}}>
         <h1 style={{marginRight:16}}>ResumeAI</h1>
         <Link to="/">Home</Link>
-        <Link to="/login">Login</Link>
-        <Link to="/register">Register</Link>
-        <Link to="/dashboard">Dashboard</Link>
-        <Link to="/generate">Generate</Link>
-        <Link to="/profile">Profile</Link>
+        {!authed && <Link to="/login">Login</Link>}
+        {!authed && <Link to="/register">Register</Link>}
+        {authed && <Link to="/dashboard">Dashboard</Link>}
+        {authed && <Link to="/generate">Generate</Link>}
+        {authed && <Link to="/documents">My Documents</Link>}
+        {authed && <Link to="/profile">Profile</Link>}
         <span style={{marginLeft:'auto'}}>Health: {status}</span>
       </header>
       <main style={{marginTop:16}}>
@@ -52,10 +77,11 @@ export default function App() {
           <Route path="/" element={<Home/>} />
           <Route path="/login" element={<Login/>} />
           <Route path="/register" element={<Register/>} />
-          <Route path="/dashboard" element={<Dashboard/>} />
-          <Route path="/generate" element={<Generate/>} />
-          <Route path="/profile" element={<Profile/>} />
-          <Route path="/documents/:id/edit" element={<Editor/>} />
+          <Route path="/dashboard" element={<RequireAuth><Dashboard/></RequireAuth>} />
+          <Route path="/generate" element={<RequireAuth><Generate/></RequireAuth>} />
+          <Route path="/documents" element={<RequireAuth><Documents/></RequireAuth>} />
+          <Route path="/profile" element={<RequireAuth><Profile/></RequireAuth>} />
+          <Route path="/documents/:id/edit" element={<RequireAuth><Editor/></RequireAuth>} />
         </Routes>
       </main>
     </div>

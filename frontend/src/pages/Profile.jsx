@@ -10,6 +10,7 @@ export default function Profile() {
   const [uploading, setUploading] = useState(false)
   const [saving, setSaving] = useState(false)
   const [photoPreview, setPhotoPreview] = useState('')
+  const [pwSaving, setPwSaving] = useState(false)
   const navigate = useNavigate()
   const toast = useToast()
 
@@ -40,6 +41,32 @@ export default function Profile() {
   }
 
   useEffect(() => { load() }, [])
+
+  const download = async (docId, filename, fmt) => {
+    try {
+      const qs = fmt ? `?fmt=${encodeURIComponent(fmt)}` : ''
+      const res = await api.get(`/documents/${docId}/download/${qs}`, { responseType: 'blob' })
+      const url = window.URL.createObjectURL(new Blob([res.data]))
+      const link = document.createElement('a')
+      link.href = url
+      const name = fmt ? withExt(filename, fmt) : filename
+      link.setAttribute('download', name)
+      document.body.appendChild(link)
+      link.click()
+      link.remove()
+      window.URL.revokeObjectURL(url)
+      toast.success('Download started')
+    } catch (e) {
+      toast.error('Download failed')
+    }
+  }
+
+  const withExt = (name, ext) => {
+    if (!name) return `document.${ext}`
+    const lower = name.toLowerCase()
+    if ((ext === 'pdf' && lower.endsWith('.pdf')) || (ext === 'docx' && lower.endsWith('.docx'))) return name
+    return name.replace(/\.(pdf|docx|txt)$/i, '') + `.${ext}`
+  }
 
   const onUpload = async (e) => {
     e.preventDefault()
@@ -149,27 +176,39 @@ export default function Profile() {
             {docs.map(d => (
               <li key={d.id} style={{ marginBottom: 8 }}>
                 v{d.version} — {d.file_name} — {new Date(d.created_at).toLocaleString()} —
-                <button style={{ marginLeft: 8 }} onClick={async () => {
-                  try {
-                    const res = await api.get(`/cv/${d.id}/download/`, { responseType: 'blob' })
-                    const url = window.URL.createObjectURL(new Blob([res.data]))
-                    const link = document.createElement('a')
-                    link.href = url
-                    link.setAttribute('download', d.file_name)
-                    document.body.appendChild(link)
-                    link.click()
-                    link.remove()
-                    window.URL.revokeObjectURL(url)
-                    toast.success('Download started')
-                  } catch (err) {
-                    setError('Download failed')
-                    toast.error('Download failed')
-                  }
-                }}>Download</button>
+                <button style={{ marginLeft: 8 }} onClick={() => download(d.id, d.file_name, null)}>Original</button>
+                <button style={{ marginLeft: 8 }} onClick={() => download(d.id, d.file_name, 'pdf')}>PDF</button>
+                <button style={{ marginLeft: 8 }} onClick={() => download(d.id, d.file_name, 'docx')}>DOCX</button>
               </li>
             ))}
           </ul>
         )}
+      </section>
+
+      <section style={{ marginTop: 24 }}>
+        <h3>Change Password</h3>
+        <form onSubmit={async (e) => {
+          e.preventDefault(); setError(''); setPwSaving(true)
+          const fd = new FormData(e.currentTarget)
+          const old_password = fd.get('old_password') || ''
+          const new_password1 = fd.get('new_password1') || ''
+          const new_password2 = fd.get('new_password2') || ''
+          try {
+            await api.post('/auth/password/change/', { old_password, new_password1, new_password2 })
+            e.currentTarget.reset()
+            toast.success('Password changed')
+          } catch (err) {
+            const data = err?.response?.data
+            const msg = typeof data === 'string' ? data : (data?.detail || JSON.stringify(data))
+            setError(msg || 'Password change failed')
+            toast.error(msg || 'Password change failed')
+          } finally { setPwSaving(false) }
+        }} style={{ display: 'grid', gap: 8, maxWidth: 360 }}>
+          <input name="old_password" type="password" placeholder="Current password" autoComplete="current-password" required />
+          <input name="new_password1" type="password" placeholder="New password" autoComplete="new-password" required />
+          <input name="new_password2" type="password" placeholder="Confirm new password" autoComplete="new-password" required />
+          <button type="submit" disabled={pwSaving}>{pwSaving ? 'Updating…' : 'Update Password'}</button>
+        </form>
       </section>
     </div>
   )

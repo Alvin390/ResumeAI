@@ -70,6 +70,12 @@ export default function Login() {
       } catch (e) {
         // Ignore profile apply errors to not block login UX
       }
+      try {
+        if (typeof window !== 'undefined') {
+          window.dispatchEvent(new Event('auth-changed'))
+          window.dispatchEvent(new Event('storage'))
+        }
+      } catch(_) {}
       navigate('/dashboard')
       toast.success('Logged in successfully')
     } catch (err) {

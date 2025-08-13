@@ -10,6 +10,14 @@ api.interceptors.request.use((config) => {
     config.headers.Authorization = `Bearer ${access}`
   } else if (key) {
     config.headers.Authorization = `Token ${key}`
+  } else {
+    // Ensure no stale Authorization header leaks through
+    if (config.headers && 'Authorization' in config.headers) {
+      delete config.headers.Authorization
+    }
+    if (api.defaults.headers && 'Authorization' in api.defaults.headers) {
+      delete api.defaults.headers.Authorization
+    }
   }
   return config
 })
@@ -31,6 +39,13 @@ api.interceptors.response.use(
       localStorage.removeItem('access')
       localStorage.removeItem('refresh')
       localStorage.removeItem('token_key')
+      if (api.defaults.headers && 'Authorization' in api.defaults.headers) {
+        delete api.defaults.headers.Authorization
+      }
+      try {
+        if (typeof window !== 'undefined') window.dispatchEvent(new Event('auth-changed'))
+        if (typeof window !== 'undefined' && window.location) window.location.replace('/login')
+      } catch(_) {}
       return Promise.reject(error)
     }
 
@@ -39,6 +54,17 @@ api.interceptors.response.use(
     if (!refresh || hasTokenKey) {
       // Can't refresh (either no refresh token or using Token auth)
       localStorage.removeItem('access')
+      localStorage.removeItem('refresh')
+      if (api.defaults.headers && 'Authorization' in api.defaults.headers) {
+        delete api.defaults.headers.Authorization
+      }
+      try {
+        if (typeof window !== 'undefined') {
+          window.dispatchEvent(new Event('auth-changed'))
+          window.dispatchEvent(new Event('storage'))
+        }
+        if (typeof window !== 'undefined' && window.location) window.location.replace('/login')
+      } catch(_) {}
       return Promise.reject(error)
     }
 
@@ -51,15 +77,27 @@ api.interceptors.response.use(
             if (newAccess) {
               localStorage.setItem('access', newAccess)
               api.defaults.headers.Authorization = `Bearer ${newAccess}`
+              try { if (typeof window !== 'undefined') window.dispatchEvent(new Event('auth-changed')) } catch(_) {}
             } else {
               localStorage.removeItem('access')
               localStorage.removeItem('refresh')
+              if (api.defaults.headers && 'Authorization' in api.defaults.headers) {
+                delete api.defaults.headers.Authorization
+              }
+              try { if (typeof window !== 'undefined') window.dispatchEvent(new Event('auth-changed')) } catch(_) {}
             }
             return newAccess
           })
           .catch(err => {
             localStorage.removeItem('access')
             localStorage.removeItem('refresh')
+            if (api.defaults.headers && 'Authorization' in api.defaults.headers) {
+              delete api.defaults.headers.Authorization
+            }
+            try {
+              if (typeof window !== 'undefined') window.dispatchEvent(new Event('auth-changed'))
+              if (typeof window !== 'undefined' && window.location) window.location.replace('/login')
+            } catch(_) {}
             throw err
           })
           .finally(() => { isRefreshing = false })
@@ -76,5 +114,25 @@ api.interceptors.response.use(
     }
   }
 )
+
+// Centralized logout helper to fully clear auth and headers
+api.logout = () => {
+  try {
+    localStorage.removeItem('access')
+    localStorage.removeItem('refresh')
+    localStorage.removeItem('token_key')
+  } catch (_) {}
+  try {
+    if (api.defaults.headers && 'Authorization' in api.defaults.headers) {
+      delete api.defaults.headers.Authorization
+    }
+  } catch (_) {}
+  try {
+    if (typeof window !== 'undefined') {
+      window.dispatchEvent(new Event('auth-changed'))
+      window.dispatchEvent(new Event('storage'))
+    }
+  } catch (_) {}
+}
 
 export default api
