@@ -2,6 +2,8 @@ import React, { useEffect, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import api from '../services/api'
 import { useToast } from '../services/toast.jsx'
+import { motion } from 'framer-motion'
+import { ProfileSkeleton } from '../components/Skeleton.jsx'
 
 export default function Profile() {
   const [profile, setProfile] = useState(null)
@@ -13,6 +15,16 @@ export default function Profile() {
   const [pwSaving, setPwSaving] = useState(false)
   const navigate = useNavigate()
   const toast = useToast()
+
+  const containerVariants = {
+    hidden: { opacity: 0 },
+    visible: { opacity: 1, transition: { staggerChildren: 0.1 } },
+  }
+
+  const itemVariants = {
+    hidden: { y: 20, opacity: 0 },
+    visible: { y: 0, opacity: 1, transition: { duration: 0.5, ease: 'easeOut' } },
+  }
 
   const load = async () => {
     try {
@@ -90,11 +102,16 @@ export default function Profile() {
   }
 
   return (
-    <div style={{ maxWidth: 720, margin: '32px auto' }}>
-      <h2>Profile</h2>
-      {error && <div style={{ color: 'red', marginBottom: 12 }}>{error}</div>}
+    <motion.div
+      style={{ maxWidth: 720, margin: '32px auto' }}
+      variants={containerVariants}
+      initial="hidden"
+      animate="visible"
+    >
+      <motion.h2 variants={itemVariants}>Profile</motion.h2>
+            {error && <div className="error-text" style={{ marginBottom: 12 }}>{error}</div>}
       {profile ? (
-        <div style={{ marginBottom: 24 }}>
+        <motion.div style={{ marginBottom: 24 }} variants={itemVariants}>
           <div><b>Full name:</b> {profile.full_name || '—'}</div>
           <div><b>Phone:</b> {profile.phone || '—'}</div>
           {photoPreview ? (
@@ -102,7 +119,7 @@ export default function Profile() {
               <img src={photoPreview} alt="profile" style={{ width: 96, height: 96, objectFit: 'cover', borderRadius: 8 }} />
             </div>
           ) : null}
-          <form style={{ marginTop: 12, display: 'flex', gap: 8, alignItems: 'center' }} onSubmit={async (e) => {
+          <form className="grid-2" style={{ marginTop: 12 }} onSubmit={async (e) => {
             e.preventDefault(); setError(''); setSaving(true)
             const fd = new FormData(e.currentTarget)
             try {
@@ -115,11 +132,11 @@ export default function Profile() {
               toast.error(err?.response?.data?.detail || 'Failed to save')
             } finally { setSaving(false) }
           }}>
-            <input name="full_name" placeholder="Full name" defaultValue={profile.full_name || ''} />
-            <input name="phone" placeholder="Phone" defaultValue={profile.phone || ''} />
-            <button type="submit" disabled={saving}>{saving ? 'Saving...' : 'Save'}</button>
+            <input className="input" name="full_name" placeholder="Full name" defaultValue={profile.full_name || ''} />
+            <input className="input" name="phone" placeholder="Phone" defaultValue={profile.phone || ''} />
+            <button className="btn btn-primary" type="submit" disabled={saving} aria-busy={saving}>{saving ? 'Saving...' : 'Save'}</button>
           </form>
-          <form style={{ marginTop: 8 }} onSubmit={async (e) => {
+          <form className="stack" style={{ marginTop: 12, maxWidth: 420 }} onSubmit={async (e) => {
             e.preventDefault(); setError('')
             const file = e.currentTarget.photo.files[0]
             if (!file) { setError('Choose a photo'); return }
@@ -150,42 +167,49 @@ export default function Profile() {
               toast.error(err?.response?.data?.detail || 'Photo upload failed')
             }
           }}>
-            <input name="photo" type="file" accept="image/*" />
-            <button type="submit">Upload Photo</button>
+            <input className="input" name="photo" type="file" accept="image/*" />
+            <button className="btn" type="submit">Upload Photo</button>
           </form>
           <div><b>Member since:</b> {new Date(profile.created_at).toLocaleString()}</div>
-        </div>
+        </motion.div>
       ) : (
-        <div>Loading profile...</div>
+        <ProfileSkeleton />
       )}
 
-      <section style={{ marginTop: 16 }}>
+      <motion.section style={{ marginTop: 16 }} variants={itemVariants}>
         <h3>Upload CV</h3>
-        <form onSubmit={onUpload}>
-          <input name="file" type="file" accept=".pdf,.doc,.docx,application/pdf,application/vnd.openxmlformats-officedocument.wordprocessingml.document,application/msword" />
-          <button type="submit" disabled={uploading} style={{ marginLeft: 8 }}>{uploading ? 'Uploading...' : 'Upload'}</button>
+        <form className="stack" onSubmit={onUpload} style={{ maxWidth: 520 }}>
+          <input className="input" name="file" type="file" accept=".pdf,.doc,.docx,application/pdf,application/vnd.openxmlformats-officedocument.wordprocessingml.document,application/msword" />
+          <button className="btn" type="submit" disabled={uploading} aria-busy={uploading}>{uploading ? 'Uploading...' : 'Upload'}</button>
         </form>
-      </section>
+      </motion.section>
 
-      <section style={{ marginTop: 24 }}>
+      <motion.section style={{ marginTop: 24 }} variants={itemVariants}>
         <h3>My CV Versions</h3>
         {docs.length === 0 ? (
           <div>No CVs uploaded yet.</div>
         ) : (
-          <ul>
+          <motion.ul style={{ listStyle: 'none', padding: 0, margin: 0 }} variants={containerVariants}>
             {docs.map(d => (
-              <li key={d.id} style={{ marginBottom: 8 }}>
-                v{d.version} — {d.file_name} — {new Date(d.created_at).toLocaleString()} —
-                <button style={{ marginLeft: 8 }} onClick={() => download(d.id, d.file_name, null)}>Original</button>
-                <button style={{ marginLeft: 8 }} onClick={() => download(d.id, d.file_name, 'pdf')}>PDF</button>
-                <button style={{ marginLeft: 8 }} onClick={() => download(d.id, d.file_name, 'docx')}>DOCX</button>
-              </li>
+              <motion.li key={d.id} className="card" style={{ marginBottom: 12 }} variants={itemVariants}>
+                <div className="card-body" style={{ display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap' }}>
+                  <div style={{ flex: 1 }}>
+                    <div style={{ fontWeight: 600 }}>v{d.version} — {d.file_name}</div>
+                    <div style={{ fontSize: 12, color: 'var(--muted)' }}>{new Date(d.created_at).toLocaleString()}</div>
+                  </div>
+                  <div style={{ display: 'flex', gap: 8 }}>
+                    <button className="btn" onClick={() => download(d.id, d.file_name, null)}>Original</button>
+                    <button className="btn" onClick={() => download(d.id, d.file_name, 'pdf')}>PDF</button>
+                    <button className="btn" onClick={() => download(d.id, d.file_name, 'docx')}>DOCX</button>
+                  </div>
+                </div>
+              </motion.li>
             ))}
-          </ul>
+          </motion.ul>
         )}
-      </section>
+      </motion.section>
 
-      <section style={{ marginTop: 24 }}>
+      <motion.section style={{ marginTop: 24 }} variants={itemVariants}>
         <h3>Change Password</h3>
         <form onSubmit={async (e) => {
           e.preventDefault(); setError(''); setPwSaving(true)
@@ -204,12 +228,12 @@ export default function Profile() {
             toast.error(msg || 'Password change failed')
           } finally { setPwSaving(false) }
         }} style={{ display: 'grid', gap: 8, maxWidth: 360 }}>
-          <input name="old_password" type="password" placeholder="Current password" autoComplete="current-password" required />
-          <input name="new_password1" type="password" placeholder="New password" autoComplete="new-password" required />
-          <input name="new_password2" type="password" placeholder="Confirm new password" autoComplete="new-password" required />
-          <button type="submit" disabled={pwSaving}>{pwSaving ? 'Updating…' : 'Update Password'}</button>
+                    <input className="input" name="old_password" type="password" placeholder="Current password" autoComplete="current-password" required />
+          <input className="input" name="new_password1" type="password" placeholder="New password" autoComplete="new-password" required />
+          <input className="input" name="new_password2" type="password" placeholder="Confirm new password" autoComplete="new-password" required />
+          <button className="btn btn-primary" type="submit" disabled={pwSaving}>{pwSaving ? 'Updating…' : 'Update Password'}</button>
         </form>
-      </section>
-    </div>
+      </motion.section>
+    </motion.div>
   )
 }

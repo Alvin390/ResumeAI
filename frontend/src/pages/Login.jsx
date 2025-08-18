@@ -7,13 +7,19 @@ export default function Login() {
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
   const [error, setError] = useState('')
+  const [submitting, setSubmitting] = useState(false)
   const navigate = useNavigate()
   const toast = useToast()
+  // Determine backend origin for social auth redirects
+  const apiBase = import.meta.env.VITE_API_URL || 'http://localhost:8000/api'
+  let serverOrigin = 'http://localhost:8000'
+  try { serverOrigin = new URL(apiBase).origin } catch (_) {}
 
   const onSubmit = async (e) => {
     e.preventDefault()
     setError('')
     try {
+      setSubmitting(true)
       const { data } = await api.post('/auth/login/', { email, username: email, password })
       // Debug: log keys to help diagnose
       // eslint-disable-next-line no-console
@@ -82,28 +88,76 @@ export default function Login() {
       const msg = err?.response?.data?.detail || 'Login failed'
       setError(msg)
       toast.error(msg)
+    } finally {
+      setSubmitting(false)
     }
   }
 
   return (
-    <div style={{ maxWidth: 420, margin: '40px auto', fontFamily: 'sans-serif' }}>
-      <h2>Login</h2>
-      <form onSubmit={onSubmit}>
-        <div style={{ marginBottom: 12 }}>
-          <label>Email</label>
-          <input value={email} onChange={e => setEmail(e.target.value)} type="email" required style={{ width: '100%' }} autoComplete="email" />
+    <div style={{ maxWidth: 520, margin: '40px auto' }}>
+      <div className="card">
+        <div className="card-body">
+          <h2 style={{ marginTop: 0, marginBottom: 8 }}>Login</h2>
+          <p style={{ color: 'var(--muted)', marginTop: 0 }}>Welcome back. Enter your credentials to continue.</p>
+          <form onSubmit={onSubmit} className="stack" noValidate>
+            <div>
+              <label className="label" htmlFor="email">Email</label>
+              <input
+                id="email"
+                className="input"
+                value={email}
+                onChange={e => setEmail(e.target.value)}
+                type="email"
+                required
+                autoComplete="email"
+                disabled={submitting}
+                aria-invalid={!!error}
+              />
+            </div>
+            <div>
+              <label className="label" htmlFor="password">Password</label>
+              <input
+                id="password"
+                className="input"
+                value={password}
+                onChange={e => setPassword(e.target.value)}
+                type="password"
+                required
+                autoComplete="current-password"
+                disabled={submitting}
+                aria-invalid={!!error}
+              />
+            </div>
+            {error && (
+                            <div role="alert" style={{ color: 'var(--text)', background: 'var(--error-bg)', border: '1px solid var(--error)', padding: '10px 12px', borderRadius: 10 }}>
+                {error}
+              </div>
+            )}
+            <button type="submit" className="btn btn-primary" disabled={submitting} aria-busy={submitting}>
+              {submitting ? 'Logging in…' : 'Login'}
+            </button>
+          </form>
+          <div style={{ display: 'flex', gap: 12, alignItems: 'center', marginTop: 14 }}>
+            <span style={{ color: 'var(--muted)', fontSize: 13 }}>No account?</span>
+            <Link to="/register" className="btn btn-ghost">Register</Link>
+          </div>
+          <div className="divider" style={{ marginTop: 16, marginBottom: 8 }}>or continue with</div>
+          <div className="grid-2-equal">
+            <a className="btn btn-google" href={`${serverOrigin}/accounts/google/login/`} rel="noopener noreferrer">
+              <svg className="icon" viewBox="0 0 24 24" aria-hidden="true">
+                <path d="M20.4 11.8c.1-.5.1-1 0-1.5H12v3.7h5.2c-.2 1.3-1.6 3.8-5.2 3.8-3.1 0-5.6-2.6-5.6-5.7S8.9 6.3 12 6.3c1.8 0 3 .8 3.7 1.5l2.5-2.4C16.8 3.9 14.6 3 12 3 7.5 3 3.8 6.6 3.8 11.1S7.5 19.2 12 19.2c6.9 0 7.9-4.9 7.4-7.4z" fill="#EA4335"/><path d="M12 3c-3.3 0-6.1 1.8-7.7 4.1l3 2.2C8.5 8 10.5 6.3 12 6.3c1.8 0 3 .8 3.7 1.5l2.5-2.4C16.8 3.9 14.6 3 12 3z" fill="#34A853"/><path d="M12 21c3.5 0 6.6-1.8 8.4-4.5l-3-2.3c-.9 1.9-2.9 3.2-5.2 3.2-3.6 0-5-2.5-5.2-3.8H3.8c.5 2.5 1.5 7.4 7.4 7.4.1 0 .1 0 .2 0z" fill="#4285F4"/><path d="M12 13.9c-3.6 0-5-2.5-5.2-3.8H3.8c.5 2.5 1.5 7.4 7.4 7.4.1 0 .1 0 .2 0 3.5 0 6.6-1.8 8.4-4.5l-3-2.3c-.9 1.9-2.9 3.2-5.2 3.2z" fill="#FBBC05"/>
+              </svg>
+              Continue with Google
+            </a>
+            <a className="btn btn-linkedin" href={`${serverOrigin}/accounts/linkedin_oauth2/login/`} rel="noopener noreferrer">
+              <svg className="icon" viewBox="0 0 24 24" aria-hidden="true">
+                <path d="M20 2H4a2 2 0 00-2 2v16a2 2 0 002 2h16a2 2 0 002-2V4a2 2 0 00-2-2zM8 18H5V8h3v10zM6.5 6.5A1.5 1.5 0 118 5a1.5 1.5 0 01-1.5 1.5zM18 18h-3v-5.09c0-1.1-.79-2.01-1.75-2.01S11.5 11.8 11.5 13v5h-3V8h3v1.32c.6-.94 1.66-1.57 2.75-1.57C16.88 7.75 18 9.12 18 11.41V18z" fill="currentColor"/>
+              </svg>
+              Continue with LinkedIn
+            </a>
+          </div>
         </div>
-        <div style={{ marginBottom: 12 }}>
-          <label>Password</label>
-          <input value={password} onChange={e => setPassword(e.target.value)} type="password" required style={{ width: '100%' }} autoComplete="current-password" />
-        </div>
-        {error && <div style={{ color: 'red', marginBottom: 12 }}>{error}</div>}
-        <button type="submit">Login</button>
-      </form>
-      <p style={{ marginTop: 12 }}>No account? <Link to="/register">Register</Link></p>
-      <hr style={{ margin: '16px 0' }} />
-      <a href="http://localhost:8000/accounts/google/login/">Login with Google</a><br />
-      <a href="http://localhost:8000/accounts/linkedin_oauth2/login/">Login with LinkedIn</a>
+      </div>
     </div>
   )
 }

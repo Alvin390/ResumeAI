@@ -155,7 +155,8 @@ export default function EditorPage() {
             onClick={() => editor && editor.chain().focus().toggleBold().run()}
             disabled={!editor}
             aria-pressed={editor?.isActive('bold')}
-            style={{ padding: '4px 8px', border: '1px solid #ddd', background: editor?.isActive('bold') ? '#eef' : '#fff', borderRadius: 4 }}
+            className="btn"
+            style={{ background: editor?.isActive('bold') ? 'rgba(255,255,255,0.12)' : undefined }}
           >
             B
           </button>
@@ -163,7 +164,8 @@ export default function EditorPage() {
             onClick={() => editor && editor.chain().focus().toggleItalic().run()}
             disabled={!editor}
             aria-pressed={editor?.isActive('italic')}
-            style={{ padding: '4px 8px', border: '1px solid #ddd', background: editor?.isActive('italic') ? '#eef' : '#fff', borderRadius: 4 }}
+            className="btn"
+            style={{ background: editor?.isActive('italic') ? 'rgba(255,255,255,0.12)' : undefined }}
           >
             I
           </button>
@@ -171,17 +173,18 @@ export default function EditorPage() {
             onClick={() => editor && editor.chain().focus().toggleUnderline().run()}
             disabled={!editor}
             aria-pressed={editor?.isActive('underline')}
-            style={{ padding: '4px 8px', border: '1px solid #ddd', background: editor?.isActive('underline') ? '#eef' : '#fff', borderRadius: 4 }}
+            className="btn"
+            style={{ background: editor?.isActive('underline') ? 'rgba(255,255,255,0.12)' : undefined }}
           >
             U
           </button>
-          <button onClick={() => editor && editor.chain().focus().toggleHeading({ level: 1 }).run()} disabled={!editor} style={{ padding: '4px 8px' }}>H1</button>
-          <button onClick={() => editor && editor.chain().focus().toggleHeading({ level: 2 }).run()} disabled={!editor} style={{ padding: '4px 8px' }}>H2</button>
-          <button onClick={() => editor && editor.chain().focus().toggleBulletList().run()} disabled={!editor} style={{ padding: '4px 8px' }}>• List</button>
-          <button onClick={() => editor && editor.chain().focus().toggleOrderedList().run()} disabled={!editor} style={{ padding: '4px 8px' }}>1. List</button>
-          <button onClick={() => editor && editor.chain().focus().undo().run()} disabled={!editor} style={{ padding: '4px 8px' }}>Undo</button>
-          <button onClick={() => editor && editor.chain().focus().redo().run()} disabled={!editor} style={{ padding: '4px 8px' }}>Redo</button>
-          <label style={{ marginLeft: 8, color: '#555' }}>Font:</label>
+          <button onClick={() => editor && editor.chain().focus().toggleHeading({ level: 1 }).run()} disabled={!editor} className="btn">H1</button>
+          <button onClick={() => editor && editor.chain().focus().toggleHeading({ level: 2 }).run()} disabled={!editor} className="btn">H2</button>
+          <button onClick={() => editor && editor.chain().focus().toggleBulletList().run()} disabled={!editor} className="btn">• List</button>
+          <button onClick={() => editor && editor.chain().focus().toggleOrderedList().run()} disabled={!editor} className="btn">1. List</button>
+          <button onClick={() => editor && editor.chain().focus().undo().run()} disabled={!editor} className="btn">Undo</button>
+          <button onClick={() => editor && editor.chain().focus().redo().run()} disabled={!editor} className="btn">Redo</button>
+          <label style={{ marginLeft: 8, color: 'var(--muted)' }}>Font:</label>
           <select
             onChange={(e) => {
               if (!editor) return
@@ -190,6 +193,8 @@ export default function EditorPage() {
               else editor.chain().focus().unsetFontFamily().run()
             }}
             defaultValue=""
+            className="input"
+            style={{ width: 200 }}
           >
             <option value="">Default</option>
             <option value="Inter, system-ui, sans-serif">Inter</option>
@@ -198,26 +203,26 @@ export default function EditorPage() {
             <option value="ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace">Monospace</option>
           </select>
         </div>
-        <div style={{ border: '1px solid #ddd', borderRadius: 6, minHeight: 400, padding: 8 }}>
+        <div style={{ border: '1px solid var(--border)', borderRadius: 12, minHeight: 400, padding: 8, background: 'var(--bg-elev)' }}>
           <EditorContent editor={editor} />
         </div>
         <div style={{ marginTop: 12, display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center' }}>
           <label>File name:</label>
-          <input value={fileName} onChange={(e) => setFileName(e.target.value)} style={{ minWidth: 240 }} />
-          <button onClick={() => onSave(false)} disabled={saving}>{saving ? 'Saving…' : 'Save New Version'}</button>
-          <button onClick={() => onSave(true)} disabled={saving}>{saving ? 'Saving…' : 'Save & Refresh Preview'}</button>
+          <input value={fileName} onChange={(e) => setFileName(e.target.value)} className="input" style={{ minWidth: 240, maxWidth: 360 }} />
+          <button className="btn btn-primary" onClick={() => onSave(false)} disabled={saving} aria-busy={saving}>{saving ? 'Saving…' : 'Save New Version'}</button>
+          <button className="btn" onClick={() => onSave(true)} disabled={saving} aria-busy={saving}>{saving ? 'Saving…' : 'Save & Refresh Preview'}</button>
           <span style={{ marginLeft: 16 }}></span>
-          <button onClick={() => download('')}>Download .txt</button>
-          <button onClick={() => download('docx')}>Download .docx</button>
-          <button onClick={() => download('pdf')}>Download .pdf</button>
+          <button className="btn" onClick={() => download('')}>Download .txt</button>
+          <button className="btn" onClick={() => download('docx')}>Download .docx</button>
+          <button className="btn" onClick={() => download('pdf')}>Download .pdf</button>
         </div>
       </div>
       <div>
         <h3>PDF Preview</h3>
         {previewUrl ? (
-          <iframe title="preview" src={previewUrl} style={{ width: '100%', height: 600, border: '1px solid #ddd', borderRadius: 6 }} />
+          <iframe title="preview" src={previewUrl} style={{ width: '100%', height: 600, border: '1px solid var(--border)', borderRadius: 12, background: 'var(--bg-elev)' }} />
         ) : (
-          <div style={{ height: 600, display:'flex', alignItems:'center', justifyContent:'center', border:'1px solid #ddd', borderRadius:6 }}>
+          <div style={{ height: 600, display:'flex', alignItems:'center', justifyContent:'center', border:'1px solid var(--border)', borderRadius:12, background: 'var(--bg-elev)' }}>
             <span>No preview</span>
           </div>
         )}

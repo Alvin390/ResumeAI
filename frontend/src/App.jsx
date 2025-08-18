@@ -1,17 +1,24 @@
 import React, { useEffect, useState } from 'react'
-import { Routes, Route, Link, useNavigate, Navigate } from 'react-router-dom'
+import { Routes, Route, Link, useNavigate, Navigate, useLocation } from 'react-router-dom'
 import api from './services/api'
+import { useToast } from './services/toast.jsx'
 import Login from './pages/Login.jsx'
 import Profile from './pages/Profile.jsx'
 import Generate from './pages/Generate.jsx'
 import Editor from './pages/Editor.jsx'
 import Documents from './pages/Documents.jsx'
+import Layout from './components/Layout.jsx'
+import { AnimatePresence } from 'framer-motion'
 
 function Home() {
   return (
-    <div>
-      <h2>Welcome to ResumeAI</h2>
-      <p>Please <Link to="/login">Login</Link> or <Link to="/register">Register</Link>.</p>
+    <div className="hero">
+      <h2>Craft ATS-optimized CVs and tailored cover letters</h2>
+      <p>Upload your CV, paste a job description, and let AI generate polished, on-brand documents. Versioned, exportable, and private.</p>
+      <div className="cta">
+        <Link to="/login" className="btn btn-primary">Login</Link>
+        <Link to="/register" className="btn">Register</Link>
+      </div>
     </div>
   )
 }
@@ -47,8 +54,16 @@ function RequireAuth({ children }) {
 export default function App() {
   const [status, setStatus] = useState('loading...')
   const [authed, setAuthed] = useState(() => !!(localStorage.getItem('access') || localStorage.getItem('token_key')))
+  const location = useLocation()
   useEffect(() => {
-    api.get('/health/').then(r => setStatus(r.data.status)).catch(() => setStatus('error'))
+    const url = (import.meta.env.VITE_API_URL || 'http://localhost:8000/api') + '/health/'
+    fetch(url, { credentials: 'omit' })
+      .then(async (r) => {
+        if (!r.ok) throw new Error('health error')
+        const d = await r.json().catch(() => ({}))
+        setStatus(d?.status || 'ok')
+      })
+      .catch(() => setStatus('error'))
   }, [])
   useEffect(() => {
     const sync = () => setAuthed(!!(localStorage.getItem('access') || localStorage.getItem('token_key')))
@@ -59,21 +74,16 @@ export default function App() {
       window.removeEventListener('auth-changed', sync)
     }
   }, [])
+  const handleLogout = () => {
+    try { api.logout() } catch(_) {}
+    if (typeof window !== 'undefined' && window.location) {
+      window.location.replace('/login')
+    }
+  }
   return (
-    <div style={{fontFamily:'sans-serif', padding: 24}}>
-      <header style={{display:'flex', gap:12, alignItems:'center'}}>
-        <h1 style={{marginRight:16}}>ResumeAI</h1>
-        <Link to="/">Home</Link>
-        {!authed && <Link to="/login">Login</Link>}
-        {!authed && <Link to="/register">Register</Link>}
-        {authed && <Link to="/dashboard">Dashboard</Link>}
-        {authed && <Link to="/generate">Generate</Link>}
-        {authed && <Link to="/documents">My Documents</Link>}
-        {authed && <Link to="/profile">Profile</Link>}
-        <span style={{marginLeft:'auto'}}>Health: {status}</span>
-      </header>
-      <main style={{marginTop:16}}>
-        <Routes>
+    <Layout authed={authed} status={status} onLogout={handleLogout}>
+      <AnimatePresence mode="wait">
+        <Routes location={location} key={location.pathname}>
           <Route path="/" element={<Home/>} />
           <Route path="/login" element={<Login/>} />
           <Route path="/register" element={<Register/>} />
@@ -83,8 +93,8 @@ export default function App() {
           <Route path="/profile" element={<RequireAuth><Profile/></RequireAuth>} />
           <Route path="/documents/:id/edit" element={<RequireAuth><Editor/></RequireAuth>} />
         </Routes>
-      </main>
-    </div>
+      </AnimatePresence>
+    </Layout>
   )
 }
 
@@ -97,9 +107,16 @@ function Register() {
   const [photoFile, setPhotoFile] = useState(null)
   const [error, setError] = useState('')
   const navigate = useNavigate()
+  const [submitting, setSubmitting] = useState(false)
+  const toast = useToast()
+  // Determine backend origin for social auth redirects
+  const apiBase = import.meta.env.VITE_API_URL || 'http://localhost:8000/api'
+  let serverOrigin = 'http://localhost:8000'
+  try { serverOrigin = new URL(apiBase).origin } catch (_) {}
   const onSubmit = async (e) => {
     e.preventDefault(); setError('')
     try {
+      setSubmitting(true)
       const resp = await api.post('/auth/registration/', { email, password1, password2 })
       const data = resp?.data || {}
       // dj-rest-auth often returns 204 No Content on success
@@ -118,6 +135,7 @@ function Register() {
             if (typeof dataUrl === 'string') localStorage.setItem('pending_photo', dataUrl)
           } catch {}
         }
+        toast.success('Account created. Please log in to continue')
         navigate('/login')
         return
       }
@@ -145,6 +163,7 @@ function Register() {
             form.append('photo', photoFile)
             await api.post('/profile/photo/', form, { headers: { 'Content-Type': 'multipart/form-data' } })
           }
+          toast.success('Account created and profile initialized')
           navigate('/profile')
           return
         } catch (e2) {
@@ -165,44 +184,78 @@ function Register() {
           if (typeof dataUrl === 'string') localStorage.setItem('pending_photo', dataUrl)
         } catch {}
       }
+      toast.success('Account created. Please log in to continue')
       navigate('/login')
     } catch (err) {
       const data = err?.response?.data
       const msg = typeof data === 'string' ? data : (data?.detail || JSON.stringify(data))
       setError(msg || 'Registration failed')
+      toast.error(msg || 'Registration failed')
+    } finally {
+      setSubmitting(false)
     }
   }
   return (
-    <div style={{ maxWidth: 420, margin: '40px auto' }}>
-      <h2>Register</h2>
-      <form onSubmit={onSubmit}>
-        <div style={{ marginBottom: 12 }}>
-          <label>Email</label>
-          <input type="email" value={email} onChange={e=>setEmail(e.target.value)} required style={{width:'100%'}} autoComplete="email"/>
+    <div style={{ maxWidth: 620, margin: '40px auto' }}>
+      <div className="card">
+        <div className="card-body">
+          <h2 style={{ marginTop: 0, marginBottom: 8 }}>Create your account</h2>
+          <p style={{ color: 'var(--muted)', marginTop: 0 }}>Register to generate CVs and cover letters faster with AI.</p>
+          <form onSubmit={onSubmit} className="stack" noValidate>
+            <div>
+              <label className="label" htmlFor="reg-email">Email</label>
+              <input id="reg-email" className="input" type="email" value={email} onChange={e=>setEmail(e.target.value)} required autoComplete="email" disabled={submitting} />
+            </div>
+            <div className="grid-2">
+              <div>
+                <label className="label" htmlFor="reg-full">Full name</label>
+                <input id="reg-full" className="input" type="text" value={fullName} onChange={e=>setFullName(e.target.value)} autoComplete="name" disabled={submitting} />
+              </div>
+              <div>
+                <label className="label" htmlFor="reg-phone">Phone</label>
+                <input id="reg-phone" className="input" type="tel" value={phone} onChange={e=>setPhone(e.target.value)} autoComplete="tel" disabled={submitting} />
+              </div>
+            </div>
+            <div className="grid-2">
+              <div>
+                <label className="label" htmlFor="reg-pass1">Password</label>
+                <input id="reg-pass1" className="input" type="password" value={password1} onChange={e=>setPassword1(e.target.value)} required autoComplete="new-password" disabled={submitting} />
+              </div>
+              <div>
+                <label className="label" htmlFor="reg-pass2">Confirm Password</label>
+                <input id="reg-pass2" className="input" type="password" value={password2} onChange={e=>setPassword2(e.target.value)} required autoComplete="new-password" disabled={submitting} />
+              </div>
+            </div>
+            <div>
+              <label className="label" htmlFor="reg-photo">Profile Photo (optional)</label>
+              <input id="reg-photo" type="file" accept="image/*" onChange={e=>setPhotoFile(e.target.files?.[0] || null)} disabled={submitting} />
+            </div>
+            {error && (
+                            <div role="alert" style={{ color: 'var(--text)', background: 'var(--error-bg)', border: '1px solid var(--error)', padding: '10px 12px', borderRadius: 10 }}>
+                {error}
+              </div>
+            )}
+            <button type="submit" className="btn btn-primary" disabled={submitting} aria-busy={submitting}>
+              {submitting ? 'Creating account…' : 'Create account'}
+            </button>
+          </form>
+          <div className="divider" style={{ marginTop: 16, marginBottom: 8 }}>or sign up with</div>
+          <div className="grid-2-equal">
+            <a className="btn btn-google" href={`${serverOrigin}/accounts/google/login/`} rel="noopener noreferrer">
+              <svg className="icon" viewBox="0 0 24 24" aria-hidden="true">
+                <path d="M20.4 11.8c.1-.5.1-1 0-1.5H12v3.7h5.2c-.2 1.3-1.6 3.8-5.2 3.8-3.1 0-5.6-2.6-5.6-5.7S8.9 6.3 12 6.3c1.8 0 3 .8 3.7 1.5l2.5-2.4C16.8 3.9 14.6 3 12 3 7.5 3 3.8 6.6 3.8 11.1S7.5 19.2 12 19.2c6.9 0 7.9-4.9 7.4-7.4z" fill="#EA4335"/><path d="M12 3c-3.3 0-6.1 1.8-7.7 4.1l3 2.2C8.5 8 10.5 6.3 12 6.3c1.8 0 3 .8 3.7 1.5l2.5-2.4C16.8 3.9 14.6 3 12 3z" fill="#34A853"/><path d="M12 21c3.5 0 6.6-1.8 8.4-4.5l-3-2.3c-.9 1.9-2.9 3.2-5.2 3.2-3.6 0-5-2.5-5.2-3.8H3.8c.5 2.5 1.5 7.4 7.4 7.4.1 0 .1 0 .2 0z" fill="#4285F4"/><path d="M12 13.9c-3.6 0-5-2.5-5.2-3.8H3.8c.5 2.5 1.5 7.4 7.4 7.4.1 0 .1 0 .2 0 3.5 0 6.6-1.8 8.4-4.5l-3-2.3c-.9 1.9-2.9 3.2-5.2 3.2z" fill="#FBBC05"/>
+              </svg>
+              Continue with Google
+            </a>
+            <a className="btn btn-linkedin" href={`${serverOrigin}/accounts/linkedin_oauth2/login/`} rel="noopener noreferrer">
+              <svg className="icon" viewBox="0 0 24 24" aria-hidden="true">
+                <path d="M20 2H4a2 2 0 00-2 2v16a2 2 0 002 2h16a2 2 0 002-2V4a2 2 0 00-2-2zM8 18H5V8h3v10zM6.5 6.5A1.5 1.5 0 118 5a1.5 1.5 0 01-1.5 1.5zM18 18h-3v-5.09c0-1.1-.79-2.01-1.75-2.01S11.5 11.8 11.5 13v5h-3V8h3v1.32c.6-.94 1.66-1.57 2.75-1.57C16.88 7.75 18 9.12 18 11.41V18z" fill="currentColor"/>
+              </svg>
+              Continue with LinkedIn
+            </a>
+          </div>
         </div>
-        <div style={{ marginBottom: 12 }}>
-          <label>Full name</label>
-          <input type="text" value={fullName} onChange={e=>setFullName(e.target.value)} style={{width:'100%'}} autoComplete="name"/>
-        </div>
-        <div style={{ marginBottom: 12 }}>
-          <label>Phone</label>
-          <input type="tel" value={phone} onChange={e=>setPhone(e.target.value)} style={{width:'100%'}} autoComplete="tel"/>
-        </div>
-        <div style={{ marginBottom: 12 }}>
-          <label>Password</label>
-          <input type="password" value={password1} onChange={e=>setPassword1(e.target.value)} required style={{width:'100%'}} autoComplete="new-password"/>
-        </div>
-        <div style={{ marginBottom: 12 }}>
-          <label>Confirm Password</label>
-          <input type="password" value={password2} onChange={e=>setPassword2(e.target.value)} required style={{width:'100%'}} autoComplete="new-password"/>
-        </div>
-        <div style={{ marginBottom: 12 }}>
-          <label>Profile Photo (optional)</label>
-          <input type="file" accept="image/*" onChange={e=>setPhotoFile(e.target.files?.[0] || null)} />
-        </div>
-        {error && <div style={{ color: 'red', marginBottom: 12 }}>{error}</div>}
-        <button type="submit">Create account</button>
-      </form>
+      </div>
     </div>
   )
 }

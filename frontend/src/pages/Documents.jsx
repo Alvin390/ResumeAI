@@ -1,6 +1,7 @@
 import React, { useEffect, useState } from 'react'
 import api from '../services/api'
 import { useToast } from '../services/toast.jsx'
+import { DocumentsSkeleton } from '../components/Skeleton.jsx'
 
 export default function Documents() {
   const [loading, setLoading] = useState(true)
@@ -57,44 +58,62 @@ export default function Documents() {
   }
 
   return (
-    <div style={{ maxWidth: 900, margin: '32px auto' }}>
-      <h2>My Documents</h2>
-      {loading ? <div>Loading…</div> : null}
-      {error && <div style={{ color: 'red', marginBottom: 12 }}>{error}</div>}
+    <div>
+      <h2 style={{ marginTop: 0, marginBottom: 8 }}>My Documents</h2>
+      {loading && <DocumentsSkeleton />}
+      {error && (
+        <div className="card" style={{ marginBottom: 16, borderColor: 'var(--error)' }}>
+          <div className="card-body" style={{ color: 'var(--text)' }}>{error}</div>
+        </div>
+      )}
 
-      <section style={{ marginTop: 16 }}>
-        <h3>CVs</h3>
+      <section style={{ marginTop: 8 }}>
+        <h3 style={{ marginTop: 0 }}>CVs</h3>
         {cvs.length === 0 ? (
-          <div>No CVs yet.</div>
+          <div className="card"><div className="card-body">No CVs yet.</div></div>
         ) : (
-          <ul>
+          <div className="stack">
             {cvs.map(d => (
-              <li key={d.id} style={{ marginBottom: 8 }}>
-                v{d.version} — {d.file_name} — {new Date(d.created_at).toLocaleString()} —
-                <button style={{ marginLeft: 8 }} onClick={() => download(d.id, d.file_name, null)}>Original</button>
-                <button style={{ marginLeft: 8 }} onClick={() => download(d.id, d.file_name, 'pdf')}>PDF</button>
-                <button style={{ marginLeft: 8 }} onClick={() => download(d.id, d.file_name, 'docx')}>DOCX</button>
-              </li>
+              <div key={d.id} className="card">
+                <div className="card-body" style={{ display: 'flex', gap: 12, alignItems: 'center', flexWrap: 'wrap' }}>
+                  <div style={{ flex: 1, minWidth: 240 }}>
+                    <div style={{ fontWeight: 600 }}>v{d.version} — {d.file_name}</div>
+                    <div style={{ color: 'var(--muted)', fontSize: 13 }}>{new Date(d.created_at).toLocaleString()}</div>
+                  </div>
+                  <div style={{ display: 'flex', gap: 8 }}>
+                    <button className="btn" onClick={() => download(d.id, d.file_name, null)}>Original</button>
+                    <button className="btn" onClick={() => download(d.id, d.file_name, 'pdf')}>PDF</button>
+                    <button className="btn" onClick={() => download(d.id, d.file_name, 'docx')}>DOCX</button>
+                  </div>
+                </div>
+              </div>
             ))}
-          </ul>
+          </div>
         )}
       </section>
 
       <section style={{ marginTop: 24 }}>
-        <h3>Cover Letters</h3>
+        <h3 style={{ marginTop: 0 }}>Cover Letters</h3>
         {covers.length === 0 ? (
-          <div>No cover letters yet.</div>
+          <div className="card"><div className="card-body">No cover letters yet.</div></div>
         ) : (
-          <ul>
+          <div className="stack">
             {covers.map(d => (
-              <li key={d.id} style={{ marginBottom: 8 }}>
-                v{d.version} — {d.file_name} — {new Date(d.created_at).toLocaleString()} —
-                <button style={{ marginLeft: 8 }} onClick={() => download(d.id, d.file_name, null)}>Original</button>
-                <button style={{ marginLeft: 8 }} onClick={() => download(d.id, d.file_name, 'pdf')}>PDF</button>
-                <button style={{ marginLeft: 8 }} onClick={() => download(d.id, d.file_name, 'docx')}>DOCX</button>
-              </li>
+              <div key={d.id} className="card">
+                <div className="card-body" style={{ display: 'flex', gap: 12, alignItems: 'center', flexWrap: 'wrap' }}>
+                  <div style={{ flex: 1, minWidth: 240 }}>
+                    <div style={{ fontWeight: 600 }}>v{d.version} — {d.file_name}</div>
+                    <div style={{ color: 'var(--muted)', fontSize: 13 }}>{new Date(d.created_at).toLocaleString()}</div>
+                  </div>
+                  <div style={{ display: 'flex', gap: 8 }}>
+                    <button className="btn" onClick={() => download(d.id, d.file_name, null)}>Original</button>
+                    <button className="btn" onClick={() => download(d.id, d.file_name, 'pdf')}>PDF</button>
+                    <button className="btn" onClick={() => download(d.id, d.file_name, 'docx')}>DOCX</button>
+                  </div>
+                </div>
+              </div>
             ))}
-          </ul>
+          </div>
         )}
       </section>
     </div>

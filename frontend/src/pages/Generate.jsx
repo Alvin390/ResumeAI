@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { useToast } from '../services/toast.jsx'
 import api from '../services/api'
+import { GenerateSkeleton } from '../components/Skeleton.jsx'
 
 export default function Generate() {
   const [jd, setJd] = useState('')
@@ -12,8 +13,14 @@ export default function Generate() {
   const [status, setStatus] = useState('idle')
   const [error, setError] = useState('')
   const [result, setResult] = useState({ cover_id: null, cv_id: null })
+  const [loading, setLoading] = useState(true)
   const navigate = useNavigate()
   const toast = useToast()
+  const templates = useMemo(() => ([
+    { id: 'classic', title: 'Classic', desc: 'Balanced, clean typographic layout' },
+    { id: 'modern', title: 'Modern', desc: 'Bold headings with accent color' },
+    { id: 'compact', title: 'Compact', desc: 'Space-efficient, concise structure' },
+  ]), [])
 
   useEffect(() => {
     // Explicit auth guard: if no token present, go to login
@@ -26,8 +33,12 @@ export default function Generate() {
     }
     // Load user's CVs for selection
     api.get('/cv/')
-      .then(r => setCvList(r.data))
+      .then(r => {
+        setCvList(r.data)
+        setLoading(false)
+      })
       .catch((e) => {
+        setLoading(false)
         if (e?.response?.status === 401) {
           console.warn('[Generate] GET /cv/ unauthorized → redirect to /login')
           navigate('/login')
@@ -127,128 +138,156 @@ export default function Generate() {
   const coverDownloadUrl = useMemo(() => result.cover_id ? `/documents/${result.cover_id}/download/` : '' , [result.cover_id])
   const cvDownloadUrl = useMemo(() => result.cv_id ? `/documents/${result.cv_id}/download/` : '', [result.cv_id])
 
-  return (
-    <div style={{ maxWidth: 760, margin: '32px auto' }}>
-      <h2>Generate tailored CV & Cover Letter</h2>
-      <form onSubmit={onStart} style={{ marginTop: 12 }}>
-        <div style={{ marginBottom: 12 }}>
-          <label>Job Description</label>
-          <textarea value={jd} onChange={e=>setJd(e.target.value)} rows={8} style={{ width: '100%' }} placeholder="Paste the job description here" />
-        </div>
-        <div style={{ marginBottom: 12 }}>
-          <label>Use CV</label>
-          <select value={selectedCv} onChange={e=>setSelectedCv(e.target.value)} style={{ width: '100%' }}>
-            <option value=''>Use latest profile CV</option>
-            {cvList.map(cv => (
-              <option key={cv.id} value={cv.id}>v{cv.version} — {cv.file_name}</option>
-            ))}
-          </select>
-        </div>
-        <div style={{ marginBottom: 12 }}>
-          <label>Template</label>
-          <select value={template} onChange={e=>setTemplate(e.target.value)}>
-            <option value='classic'>Classic</option>
-            <option value='modern'>Modern</option>
-            <option value='compact'>Compact</option>
-          </select>
-        </div>
-        {error && <div style={{ color: 'red', marginBottom: 8 }}>{error}</div>}
-        <button type="submit" disabled={!jd.trim() || status === 'queued' || status === 'running'}>
-          {status === 'running' ? 'Generating…' : status === 'queued' ? 'Queued…' : 'Generate'}
-        </button>
-      </form>
+  if (loading) {
+    return <GenerateSkeleton />
+  }
 
-      {jobId && (
-        <div style={{ marginTop: 16 }}>
-          <div><b>Job ID:</b> {jobId} — <b>Status:</b> {status}</div>
-          {(result.cover_id || result.cv_id) && (
-            <div style={{ marginTop: 8, display: 'grid', gap: 10 }}>
-              {result.cover_id && (
+  return (
+    <div style={{ margin: '24px auto', maxWidth: 1080 }}>
+      <h2>Generate tailored CV & Cover Letter</h2>
+      <div className="grid-2" style={{ marginTop: 12 }}>
+        <div>
+          <div className="card">
+            <div className="card-body">
+              <form onSubmit={onStart} className="stack" noValidate>
                 <div>
-                  <b>Cover Letter:</b>
-                  <div style={{ display: 'flex', gap: 8, marginTop: 4, flexWrap: 'wrap' }}>
-                    <button onClick={() => navigate(`/documents/${result.cover_id}/edit`)}>Edit</button>
-                    <button onClick={async () => {
-                      try {
-                        const res = await api.get(`/documents/${result.cover_id}/download/`, { responseType: 'blob' })
-                        const url = window.URL.createObjectURL(new Blob([res.data]))
-                        const link = document.createElement('a')
-                        link.href = url
-                        link.setAttribute('download', `cover_letter_${jobId}.txt`)
-                        document.body.appendChild(link); link.click(); link.remove(); window.URL.revokeObjectURL(url)
-                        toast.success('TXT downloaded successfully')
-                      } catch (_) { toast.error('TXT download failed') }
-                    }}>TXT</button>
-                    <button onClick={async () => {
-                      try {
-                        const res = await api.get(`/documents/${result.cover_id}/download/?fmt=docx`, { responseType: 'blob' })
-                        const url = window.URL.createObjectURL(new Blob([res.data]))
-                        const link = document.createElement('a')
-                        link.href = url
-                        link.setAttribute('download', `cover_letter_${jobId}.docx`)
-                        document.body.appendChild(link); link.click(); link.remove(); window.URL.revokeObjectURL(url)
-                        toast.success('DOCX downloaded successfully')
-                      } catch (_) { toast.error('DOCX download failed') }
-                    }}>DOCX</button>
-                    <button onClick={async () => {
-                      try {
-                        const res = await api.get(`/documents/${result.cover_id}/download/?fmt=pdf`, { responseType: 'blob' })
-                        const url = window.URL.createObjectURL(new Blob([res.data]))
-                        const link = document.createElement('a')
-                        link.href = url
-                        link.setAttribute('download', `cover_letter_${jobId}.pdf`)
-                        document.body.appendChild(link); link.click(); link.remove(); window.URL.revokeObjectURL(url)
-                        toast.success('PDF downloaded successfully')
-                      } catch (_) { toast.error('PDF download failed') }
-                    }}>PDF</button>
-                  </div>
+                  <label className="label" htmlFor="jd">Job Description</label>
+                  <textarea id="jd" className="textarea" value={jd} onChange={e=>setJd(e.target.value)} rows={12} placeholder="Paste the job description here" />
                 </div>
-              )}
-              {result.cv_id && (
-                <div>
-                  <b>Generated CV:</b>
-                  <div style={{ display: 'flex', gap: 8, marginTop: 4, flexWrap: 'wrap' }}>
-                    <button onClick={() => navigate(`/documents/${result.cv_id}/edit`)}>Edit</button>
-                    <button onClick={async () => {
-                      try {
-                        const res = await api.get(`/documents/${result.cv_id}/download/`, { responseType: 'blob' })
-                        const url = window.URL.createObjectURL(new Blob([res.data]))
-                        const link = document.createElement('a')
-                        link.href = url
-                        link.setAttribute('download', `generated_cv_${jobId}.txt`)
-                        document.body.appendChild(link); link.click(); link.remove(); window.URL.revokeObjectURL(url)
-                        toast.success('TXT downloaded successfully')
-                      } catch (_) { toast.error('TXT download failed') }
-                    }}>TXT</button>
-                    <button onClick={async () => {
-                      try {
-                        const res = await api.get(`/documents/${result.cv_id}/download/?fmt=docx`, { responseType: 'blob' })
-                        const url = window.URL.createObjectURL(new Blob([res.data]))
-                        const link = document.createElement('a')
-                        link.href = url
-                        link.setAttribute('download', `generated_cv_${jobId}.docx`)
-                        document.body.appendChild(link); link.click(); link.remove(); window.URL.revokeObjectURL(url)
-                        toast.success('DOCX downloaded successfully')
-                      } catch (_) { toast.error('DOCX download failed') }
-                    }}>DOCX</button>
-                    <button onClick={async () => {
-                      try {
-                        const res = await api.get(`/documents/${result.cv_id}/download/?fmt=pdf`, { responseType: 'blob' })
-                        const url = window.URL.createObjectURL(new Blob([res.data]))
-                        const link = document.createElement('a')
-                        link.href = url
-                        link.setAttribute('download', `generated_cv_${jobId}.pdf`)
-                        document.body.appendChild(link); link.click(); link.remove(); window.URL.revokeObjectURL(url)
-                        toast.success('PDF downloaded successfully')
-                      } catch (_) { toast.error('PDF download failed') }
-                    }}>PDF</button>
+                {error && (
+                  <div role="alert" style={{ color: 'var(--text)', background: 'rgba(239,68,68,.15)', border: '1px solid var(--error)', padding: '10px 12px', borderRadius: 10 }}>
+                    {error}
                   </div>
+                )}
+                <button type="submit" className="btn btn-primary" disabled={!jd.trim() || status === 'queued' || status === 'running'} aria-busy={status === 'queued' || status === 'running'}>
+                  {status === 'running' ? 'Generating…' : status === 'queued' ? 'Queued…' : 'Generate'}
+                </button>
+              </form>
+            </div>
+          </div>
+        </div>
+        <div className="stack">
+          <div className="card">
+            <div className="card-body">
+              <div style={{ marginBottom: 10 }}>
+                <div className="label">Choose Template</div>
+                <div style={{ display: 'grid', gap: 10 }}>
+                  {templates.map(t => (
+                    <button type="button" key={t.id} className="card" onClick={() => setTemplate(t.id)} aria-pressed={template === t.id} style={{ borderWidth: template === t.id ? 2 : 1, borderColor: template === t.id ? 'var(--primary)' : 'var(--border)' }}>
+                      <div className="card-body" style={{ padding: '12px 14px' }}>
+                        <div style={{ fontWeight: 600 }}>{t.title}</div>
+                        <div style={{ fontSize: 12, color: 'var(--muted)' }}>{t.desc}</div>
+                      </div>
+                    </button>
+                  ))}
                 </div>
-              )}
+              </div>
+              <div>
+                <label className="label" htmlFor="use-cv">Use CV</label>
+                <select id="use-cv" className="select" value={selectedCv} onChange={e=>setSelectedCv(e.target.value)}>
+                  <option value=''>Use latest profile CV</option>
+                  {cvList.map(cv => (
+                    <option key={cv.id} value={cv.id}>v{cv.version} — {cv.file_name}</option>
+                  ))}
+                </select>
+              </div>
+            </div>
+          </div>
+          {jobId && (
+            <div className="card">
+              <div className="card-body">
+                <div><b>Job ID:</b> {jobId} — <b>Status:</b> {status}</div>
+                {(result.cover_id || result.cv_id) && (
+                  <div className="stack" style={{ marginTop: 8 }}>
+                    {result.cover_id && (
+                      <div>
+                        <b>Cover Letter:</b>
+                        <div style={{ display: 'flex', gap: 8, marginTop: 4, flexWrap: 'wrap' }}>
+                          <button className="btn" onClick={() => navigate(`/documents/${result.cover_id}/edit`)}>Edit</button>
+                          <button className="btn" onClick={async () => {
+                            try {
+                              const res = await api.get(`/documents/${result.cover_id}/download/`, { responseType: 'blob' })
+                              const url = window.URL.createObjectURL(new Blob([res.data]))
+                              const link = document.createElement('a')
+                              link.href = url
+                              link.setAttribute('download', `cover_letter_${jobId}.txt`)
+                              document.body.appendChild(link); link.click(); link.remove(); window.URL.revokeObjectURL(url)
+                              toast.success('TXT downloaded successfully')
+                            } catch (_) { toast.error('TXT download failed') }
+                          }}>TXT</button>
+                          <button className="btn" onClick={async () => {
+                            try {
+                              const res = await api.get(`/documents/${result.cover_id}/download/?fmt=docx`, { responseType: 'blob' })
+                              const url = window.URL.createObjectURL(new Blob([res.data]))
+                              const link = document.createElement('a')
+                              link.href = url
+                              link.setAttribute('download', `cover_letter_${jobId}.docx`)
+                              document.body.appendChild(link); link.click(); link.remove(); window.URL.revokeObjectURL(url)
+                              toast.success('DOCX downloaded successfully')
+                            } catch (_) { toast.error('DOCX download failed') }
+                          }}>DOCX</button>
+                          <button className="btn" onClick={async () => {
+                            try {
+                              const res = await api.get(`/documents/${result.cover_id}/download/?fmt=pdf`, { responseType: 'blob' })
+                              const url = window.URL.createObjectURL(new Blob([res.data]))
+                              const link = document.createElement('a')
+                              link.href = url
+                              link.setAttribute('download', `cover_letter_${jobId}.pdf`)
+                              document.body.appendChild(link); link.click(); link.remove(); window.URL.revokeObjectURL(url)
+                              toast.success('PDF downloaded successfully')
+                            } catch (_) { toast.error('PDF download failed') }
+                          }}>PDF</button>
+                        </div>
+                      </div>
+                    )}
+                    {result.cv_id && (
+                      <div>
+                        <b>Generated CV:</b>
+                        <div style={{ display: 'flex', gap: 8, marginTop: 4, flexWrap: 'wrap' }}>
+                          <button className="btn" onClick={() => navigate(`/documents/${result.cv_id}/edit`)}>Edit</button>
+                          <button className="btn" onClick={async () => {
+                            try {
+                              const res = await api.get(`/documents/${result.cv_id}/download/`, { responseType: 'blob' })
+                              const url = window.URL.createObjectURL(new Blob([res.data]))
+                              const link = document.createElement('a')
+                              link.href = url
+                              link.setAttribute('download', `generated_cv_${jobId}.txt`)
+                              document.body.appendChild(link); link.click(); link.remove(); window.URL.revokeObjectURL(url)
+                              toast.success('TXT downloaded successfully')
+                            } catch (_) { toast.error('TXT download failed') }
+                          }}>TXT</button>
+                          <button className="btn" onClick={async () => {
+                            try {
+                              const res = await api.get(`/documents/${result.cv_id}/download/?fmt=docx`, { responseType: 'blob' })
+                              const url = window.URL.createObjectURL(new Blob([res.data]))
+                              const link = document.createElement('a')
+                              link.href = url
+                              link.setAttribute('download', `generated_cv_${jobId}.docx`)
+                              document.body.appendChild(link); link.click(); link.remove(); window.URL.revokeObjectURL(url)
+                              toast.success('DOCX downloaded successfully')
+                            } catch (_) { toast.error('DOCX download failed') }
+                          }}>DOCX</button>
+                          <button className="btn" onClick={async () => {
+                            try {
+                              const res = await api.get(`/documents/${result.cv_id}/download/?fmt=pdf`, { responseType: 'blob' })
+                              const url = window.URL.createObjectURL(new Blob([res.data]))
+                              const link = document.createElement('a')
+                              link.href = url
+                              link.setAttribute('download', `generated_cv_${jobId}.pdf`)
+                              document.body.appendChild(link); link.click(); link.remove(); window.URL.revokeObjectURL(url)
+                              toast.success('PDF downloaded successfully')
+                            } catch (_) { toast.error('PDF download failed') }
+                          }}>PDF</button>
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                )}
+              </div>
             </div>
           )}
         </div>
-      )}
+      </div>
     </div>
   )
 }
