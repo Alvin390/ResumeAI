@@ -2,6 +2,7 @@ from django.urls import path
 from .views import (
     health,
     ProfileView,
+    UserUpdateView,
     DocumentListCreateView,
     DocumentDownloadView,
     DocumentDetailView,
@@ -20,6 +21,7 @@ urlpatterns = [
     path("health/", health, name="health"),
     path("profile/", ProfileView.as_view(), name="profile"),
     path("profile/photo/", ProfilePhotoView.as_view(), name="profile-photo"),
+    path("auth/user/", UserUpdateView.as_view(), name="user-update"),
     path("cv/", DocumentListCreateView.as_view(), name="cv-list-create"),
     path("cv/<int:pk>/download/", DocumentDownloadView.as_view(), name="cv-download"),
     # General document routes

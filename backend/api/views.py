@@ -5,11 +5,14 @@ from django.http import JsonResponse, HttpResponse
 from rest_framework import permissions, status
 from rest_framework.parsers import MultiPartParser, FormParser
 from rest_framework.views import APIView
+from django.contrib.auth import get_user_model
 import io
 import base64
 from .serializers import ProfileSerializer, DocumentSerializer, JobDescriptionSerializer, GenerationJobSerializer
 from .models import Profile, Document, JobDescription, GenerationJob, AuditLog
 from .tasks import generate_documents
+
+User = get_user_model()
 
 @api_view(["GET"])
 @permission_classes([AllowAny])
@@ -47,6 +50,64 @@ class ProfileView(APIView):
                     user=request.user,
                     category="profile",
                     action="profile_update_error",
+                    path=request.path,
+                    method=request.method,
+                    status_code=400,
+                    extra={"error": str(e)},
+                )
+            except Exception:
+                pass
+            raise
+
+
+class UserUpdateView(APIView):
+    permission_classes = [permissions.IsAuthenticated]
+    
+    def patch(self, request):
+        user = request.user
+        try:
+            email = request.data.get('email')
+            username = request.data.get('username')
+            
+            if email and email != user.email:
+                # Check if email already exists
+                if User.objects.filter(email=email).exclude(id=user.id).exists():
+                    return Response({"detail": "Email already exists"}, status=status.HTTP_400_BAD_REQUEST)
+                user.email = email
+            
+            if username and username != user.username:
+                # Check if username already exists
+                if User.objects.filter(username=username).exclude(id=user.id).exists():
+                    return Response({"detail": "Username already exists"}, status=status.HTTP_400_BAD_REQUEST)
+                user.username = username
+            
+            user.save()
+            
+            try:
+                AuditLog.objects.create(
+                    user=request.user,
+                    category="auth",
+                    action="user_update",
+                    path=request.path,
+                    method=request.method,
+                    status_code=200,
+                    extra={"fields": list(request.data.keys())},
+                )
+            except Exception:
+                pass
+            
+            return Response({
+                "id": user.id,
+                "username": user.username,
+                "email": user.email,
+                "date_joined": user.date_joined,
+            })
+        except Exception as e:
+            try:
+                AuditLog.objects.create(
+                    user=request.user,
+                    category="auth",
+                    action="user_update_error",
                     path=request.path,
                     method=request.method,
                     status_code=400,

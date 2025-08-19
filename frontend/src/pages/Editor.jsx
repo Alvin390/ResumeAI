@@ -7,6 +7,23 @@ import TextStyle from '@tiptap/extension-text-style'
 import FontFamily from '@tiptap/extension-font-family'
 import api from '../services/api'
 import { useToast } from '../services/toast.jsx'
+import { motion } from 'framer-motion'
+import { 
+  Bold, 
+  Italic, 
+  Underline as UnderlineIcon, 
+  Heading1, 
+  Heading2, 
+  List, 
+  ListOrdered, 
+  Undo2, 
+  Redo2,
+  Save,
+  Download,
+  FileText,
+  FileImage,
+  Eye
+} from 'lucide-react'
 
 function textToHtml(text) {
   if (!text) return '<p></p>'
@@ -149,72 +166,319 @@ export default function EditorPage() {
             <div><b>Type:</b> {doc.doc_type} — <b>v</b>{doc.version} — <b>File:</b> {doc.file_name}</div>
           </div>
         ) : null}
-        {/* Toolbar */}
-        <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 8, flexWrap: 'wrap' }}>
-          <button
-            onClick={() => editor && editor.chain().focus().toggleBold().run()}
-            disabled={!editor}
-            aria-pressed={editor?.isActive('bold')}
-            className="btn"
-            style={{ background: editor?.isActive('bold') ? 'rgba(255,255,255,0.12)' : undefined }}
-          >
-            B
-          </button>
-          <button
-            onClick={() => editor && editor.chain().focus().toggleItalic().run()}
-            disabled={!editor}
-            aria-pressed={editor?.isActive('italic')}
-            className="btn"
-            style={{ background: editor?.isActive('italic') ? 'rgba(255,255,255,0.12)' : undefined }}
-          >
-            I
-          </button>
-          <button
-            onClick={() => editor && editor.chain().focus().toggleUnderline().run()}
-            disabled={!editor}
-            aria-pressed={editor?.isActive('underline')}
-            className="btn"
-            style={{ background: editor?.isActive('underline') ? 'rgba(255,255,255,0.12)' : undefined }}
-          >
-            U
-          </button>
-          <button onClick={() => editor && editor.chain().focus().toggleHeading({ level: 1 }).run()} disabled={!editor} className="btn">H1</button>
-          <button onClick={() => editor && editor.chain().focus().toggleHeading({ level: 2 }).run()} disabled={!editor} className="btn">H2</button>
-          <button onClick={() => editor && editor.chain().focus().toggleBulletList().run()} disabled={!editor} className="btn">• List</button>
-          <button onClick={() => editor && editor.chain().focus().toggleOrderedList().run()} disabled={!editor} className="btn">1. List</button>
-          <button onClick={() => editor && editor.chain().focus().undo().run()} disabled={!editor} className="btn">Undo</button>
-          <button onClick={() => editor && editor.chain().focus().redo().run()} disabled={!editor} className="btn">Redo</button>
-          <label style={{ marginLeft: 8, color: 'var(--muted)' }}>Font:</label>
-          <select
-            onChange={(e) => {
-              if (!editor) return
-              const val = e.target.value
-              if (val) editor.chain().focus().setFontFamily(val).run()
-              else editor.chain().focus().unsetFontFamily().run()
-            }}
-            defaultValue=""
-            className="input"
-            style={{ width: 200 }}
-          >
-            <option value="">Default</option>
-            <option value="Inter, system-ui, sans-serif">Inter</option>
-            <option value="Georgia, serif">Georgia</option>
-            <option value="Times New Roman, Times, serif">Times New Roman</option>
-            <option value="ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace">Monospace</option>
-          </select>
+        {/* Enhanced Toolbar */}
+        <div style={{ 
+          display: 'flex', 
+          alignItems: 'center', 
+          gap: 4, 
+          marginBottom: 16, 
+          flexWrap: 'wrap',
+          padding: '12px 16px',
+          background: 'var(--bg-elev)',
+          borderRadius: 12,
+          border: '1px solid var(--border)'
+        }}>
+          {/* Text Formatting Group */}
+          <div style={{ display: 'flex', gap: 2, marginRight: 12 }}>
+            <motion.button
+              whileHover={{ scale: 1.05 }}
+              whileTap={{ scale: 0.95 }}
+              onClick={() => editor && editor.chain().focus().toggleBold().run()}
+              disabled={!editor}
+              aria-pressed={editor?.isActive('bold')}
+              className="btn"
+              style={{ 
+                background: editor?.isActive('bold') ? 'var(--primary)' : 'transparent',
+                color: editor?.isActive('bold') ? 'white' : 'var(--text)',
+                border: '1px solid var(--border)',
+                padding: '8px',
+                minWidth: 36,
+                height: 36
+              }}
+              title="Bold"
+            >
+              <Bold size={16} />
+            </motion.button>
+            <motion.button
+              whileHover={{ scale: 1.05 }}
+              whileTap={{ scale: 0.95 }}
+              onClick={() => editor && editor.chain().focus().toggleItalic().run()}
+              disabled={!editor}
+              aria-pressed={editor?.isActive('italic')}
+              className="btn"
+              style={{ 
+                background: editor?.isActive('italic') ? 'var(--primary)' : 'transparent',
+                color: editor?.isActive('italic') ? 'white' : 'var(--text)',
+                border: '1px solid var(--border)',
+                padding: '8px',
+                minWidth: 36,
+                height: 36
+              }}
+              title="Italic"
+            >
+              <Italic size={16} />
+            </motion.button>
+            <motion.button
+              whileHover={{ scale: 1.05 }}
+              whileTap={{ scale: 0.95 }}
+              onClick={() => editor && editor.chain().focus().toggleUnderline().run()}
+              disabled={!editor}
+              aria-pressed={editor?.isActive('underline')}
+              className="btn"
+              style={{ 
+                background: editor?.isActive('underline') ? 'var(--primary)' : 'transparent',
+                color: editor?.isActive('underline') ? 'white' : 'var(--text)',
+                border: '1px solid var(--border)',
+                padding: '8px',
+                minWidth: 36,
+                height: 36
+              }}
+              title="Underline"
+            >
+              <UnderlineIcon size={16} />
+            </motion.button>
+          </div>
+
+          {/* Divider */}
+          <div style={{ width: 1, height: 24, background: 'var(--border)', marginRight: 12 }}></div>
+
+          {/* Headings Group */}
+          <div style={{ display: 'flex', gap: 2, marginRight: 12 }}>
+            <motion.button
+              whileHover={{ scale: 1.05 }}
+              whileTap={{ scale: 0.95 }}
+              onClick={() => editor && editor.chain().focus().toggleHeading({ level: 1 }).run()}
+              disabled={!editor}
+              aria-pressed={editor?.isActive('heading', { level: 1 })}
+              className="btn"
+              style={{ 
+                background: editor?.isActive('heading', { level: 1 }) ? 'var(--primary)' : 'transparent',
+                color: editor?.isActive('heading', { level: 1 }) ? 'white' : 'var(--text)',
+                border: '1px solid var(--border)',
+                padding: '8px',
+                minWidth: 36,
+                height: 36
+              }}
+              title="Heading 1"
+            >
+              <Heading1 size={16} />
+            </motion.button>
+            <motion.button
+              whileHover={{ scale: 1.05 }}
+              whileTap={{ scale: 0.95 }}
+              onClick={() => editor && editor.chain().focus().toggleHeading({ level: 2 }).run()}
+              disabled={!editor}
+              aria-pressed={editor?.isActive('heading', { level: 2 })}
+              className="btn"
+              style={{ 
+                background: editor?.isActive('heading', { level: 2 }) ? 'var(--primary)' : 'transparent',
+                color: editor?.isActive('heading', { level: 2 }) ? 'white' : 'var(--text)',
+                border: '1px solid var(--border)',
+                padding: '8px',
+                minWidth: 36,
+                height: 36
+              }}
+              title="Heading 2"
+            >
+              <Heading2 size={16} />
+            </motion.button>
+          </div>
+
+          {/* Divider */}
+          <div style={{ width: 1, height: 24, background: 'var(--border)', marginRight: 12 }}></div>
+
+          {/* Lists Group */}
+          <div style={{ display: 'flex', gap: 2, marginRight: 12 }}>
+            <motion.button
+              whileHover={{ scale: 1.05 }}
+              whileTap={{ scale: 0.95 }}
+              onClick={() => editor && editor.chain().focus().toggleBulletList().run()}
+              disabled={!editor}
+              aria-pressed={editor?.isActive('bulletList')}
+              className="btn"
+              style={{ 
+                background: editor?.isActive('bulletList') ? 'var(--primary)' : 'transparent',
+                color: editor?.isActive('bulletList') ? 'white' : 'var(--text)',
+                border: '1px solid var(--border)',
+                padding: '8px',
+                minWidth: 36,
+                height: 36
+              }}
+              title="Bullet List"
+            >
+              <List size={16} />
+            </motion.button>
+            <motion.button
+              whileHover={{ scale: 1.05 }}
+              whileTap={{ scale: 0.95 }}
+              onClick={() => editor && editor.chain().focus().toggleOrderedList().run()}
+              disabled={!editor}
+              aria-pressed={editor?.isActive('orderedList')}
+              className="btn"
+              style={{ 
+                background: editor?.isActive('orderedList') ? 'var(--primary)' : 'transparent',
+                color: editor?.isActive('orderedList') ? 'white' : 'var(--text)',
+                border: '1px solid var(--border)',
+                padding: '8px',
+                minWidth: 36,
+                height: 36
+              }}
+              title="Numbered List"
+            >
+              <ListOrdered size={16} />
+            </motion.button>
+          </div>
+
+          {/* Divider */}
+          <div style={{ width: 1, height: 24, background: 'var(--border)', marginRight: 12 }}></div>
+
+          {/* History Group */}
+          <div style={{ display: 'flex', gap: 2, marginRight: 12 }}>
+            <motion.button
+              whileHover={{ scale: 1.05 }}
+              whileTap={{ scale: 0.95 }}
+              onClick={() => editor && editor.chain().focus().undo().run()}
+              disabled={!editor || !editor.can().undo()}
+              className="btn"
+              style={{ 
+                background: 'transparent',
+                color: 'var(--text)',
+                border: '1px solid var(--border)',
+                padding: '8px',
+                minWidth: 36,
+                height: 36,
+                opacity: !editor || !editor.can().undo() ? 0.5 : 1
+              }}
+              title="Undo"
+            >
+              <Undo2 size={16} />
+            </motion.button>
+            <motion.button
+              whileHover={{ scale: 1.05 }}
+              whileTap={{ scale: 0.95 }}
+              onClick={() => editor && editor.chain().focus().redo().run()}
+              disabled={!editor || !editor.can().redo()}
+              className="btn"
+              style={{ 
+                background: 'transparent',
+                color: 'var(--text)',
+                border: '1px solid var(--border)',
+                padding: '8px',
+                minWidth: 36,
+                height: 36,
+                opacity: !editor || !editor.can().redo() ? 0.5 : 1
+              }}
+              title="Redo"
+            >
+              <Redo2 size={16} />
+            </motion.button>
+          </div>
+
+          {/* Font Family Selector */}
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginLeft: 'auto' }}>
+            <label style={{ fontSize: 13, color: 'var(--muted)', fontWeight: 500 }}>Font:</label>
+            <select
+              onChange={(e) => {
+                if (!editor) return
+                const val = e.target.value
+                if (val) editor.chain().focus().setFontFamily(val).run()
+                else editor.chain().focus().unsetFontFamily().run()
+              }}
+              defaultValue=""
+              className="select"
+              style={{ 
+                width: 180,
+                fontSize: 13,
+                padding: '6px 10px',
+                height: 36
+              }}
+            >
+              <option value="">Default</option>
+              <option value="Inter, system-ui, sans-serif">Inter</option>
+              <option value="Georgia, serif">Georgia</option>
+              <option value="Times New Roman, Times, serif">Times New Roman</option>
+              <option value="ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace">Monospace</option>
+            </select>
+          </div>
         </div>
         <div style={{ border: '1px solid var(--border)', borderRadius: 12, minHeight: 400, padding: 8, background: 'var(--bg-elev)' }}>
           <EditorContent editor={editor} />
         </div>
-        <div style={{ marginTop: 12, display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center' }}>
-          <label>File name:</label>
-          <input value={fileName} onChange={(e) => setFileName(e.target.value)} className="input" style={{ minWidth: 240, maxWidth: 360 }} />
-          <button className="btn btn-primary" onClick={() => onSave(false)} disabled={saving} aria-busy={saving}>{saving ? 'Saving…' : 'Save New Version'}</button>
-          <button className="btn" onClick={() => onSave(true)} disabled={saving} aria-busy={saving}>{saving ? 'Saving…' : 'Save & Refresh Preview'}</button>
-          <span style={{ marginLeft: 16 }}></span>
-          <button className="btn" onClick={() => download('')}>Download .txt</button>
-          <button className="btn" onClick={() => download('docx')}>Download .docx</button>
-          <button className="btn" onClick={() => download('pdf')}>Download .pdf</button>
+        <div style={{ marginTop: 16, display: 'flex', gap: 12, flexWrap: 'wrap', alignItems: 'center' }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+            <label style={{ fontSize: 14, fontWeight: 500, color: 'var(--text)' }}>File name:</label>
+            <input 
+              value={fileName} 
+              onChange={(e) => setFileName(e.target.value)} 
+              className="input" 
+              style={{ minWidth: 240, maxWidth: 360, fontSize: 14 }} 
+            />
+          </div>
+          
+          <div style={{ display: 'flex', gap: 8 }}>
+            <motion.button 
+              className="btn btn-primary" 
+              onClick={() => onSave(false)} 
+              disabled={saving} 
+              aria-busy={saving}
+              whileHover={{ scale: 1.02 }}
+              whileTap={{ scale: 0.98 }}
+              style={{ display: 'flex', alignItems: 'center', gap: 8 }}
+            >
+              <Save size={16} />
+              {saving ? 'Saving…' : 'Save New Version'}
+            </motion.button>
+            
+            <motion.button 
+              className="btn" 
+              onClick={() => onSave(true)} 
+              disabled={saving} 
+              aria-busy={saving}
+              whileHover={{ scale: 1.02 }}
+              whileTap={{ scale: 0.98 }}
+              style={{ display: 'flex', alignItems: 'center', gap: 8 }}
+            >
+              <Eye size={16} />
+              {saving ? 'Saving…' : 'Save & Preview'}
+            </motion.button>
+          </div>
+
+          <div style={{ width: 1, height: 24, background: 'var(--border)' }}></div>
+          
+          <div style={{ display: 'flex', gap: 8 }}>
+            <motion.button 
+              className="btn" 
+              onClick={() => download('')}
+              whileHover={{ scale: 1.02 }}
+              whileTap={{ scale: 0.98 }}
+              style={{ display: 'flex', alignItems: 'center', gap: 8 }}
+            >
+              <FileText size={16} />
+              TXT
+            </motion.button>
+            
+            <motion.button 
+              className="btn" 
+              onClick={() => download('docx')}
+              whileHover={{ scale: 1.02 }}
+              whileTap={{ scale: 0.98 }}
+              style={{ display: 'flex', alignItems: 'center', gap: 8 }}
+            >
+              <Download size={16} />
+              DOCX
+            </motion.button>
+            
+            <motion.button 
+              className="btn" 
+              onClick={() => download('pdf')}
+              whileHover={{ scale: 1.02 }}
+              whileTap={{ scale: 0.98 }}
+              style={{ display: 'flex', alignItems: 'center', gap: 8 }}
+            >
+              <FileImage size={16} />
+              PDF
+            </motion.button>
+          </div>
         </div>
       </div>
       <div>

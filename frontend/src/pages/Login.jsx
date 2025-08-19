@@ -2,6 +2,8 @@ import React, { useState } from 'react'
 import { useNavigate, Link } from 'react-router-dom'
 import api from '../services/api'
 import { useToast } from '../services/toast.jsx'
+import { motion } from 'framer-motion'
+import { Mail, Lock, LogIn } from 'lucide-react'
 
 export default function Login() {
   const [email, setEmail] = useState('')
@@ -94,15 +96,27 @@ export default function Login() {
   }
 
   return (
-    <div style={{ maxWidth: 520, margin: '40px auto' }}>
-      <div className="card">
+    <motion.div 
+      style={{ maxWidth: 520, margin: '40px auto' }}
+      initial={{ opacity: 0, y: 20 }}
+      animate={{ opacity: 1, y: 0 }}
+      transition={{ duration: 0.5 }}
+    >
+      <motion.div 
+        className="card"
+        whileHover={{ y: -2, boxShadow: '0 8px 25px rgba(0,0,0,0.1)' }}
+        transition={{ duration: 0.2 }}
+      >
         <div className="card-body">
           <h2 style={{ marginTop: 0, marginBottom: 8 }}>Login</h2>
           <p style={{ color: 'var(--muted)', marginTop: 0 }}>Welcome back. Enter your credentials to continue.</p>
           <form onSubmit={onSubmit} className="stack" noValidate>
             <div>
-              <label className="label" htmlFor="email">Email</label>
-              <input
+              <label className="label" htmlFor="email">
+                <Mail size={16} style={{ marginRight: 8, color: 'var(--primary)' }} />
+                Email
+              </label>
+              <motion.input
                 id="email"
                 className="input"
                 value={email}
@@ -112,11 +126,16 @@ export default function Login() {
                 autoComplete="email"
                 disabled={submitting}
                 aria-invalid={!!error}
+                whileFocus={{ scale: 1.02, borderColor: 'var(--primary)' }}
+                transition={{ duration: 0.2 }}
               />
             </div>
             <div>
-              <label className="label" htmlFor="password">Password</label>
-              <input
+              <label className="label" htmlFor="password">
+                <Lock size={16} style={{ marginRight: 8, color: 'var(--primary)' }} />
+                Password
+              </label>
+              <motion.input
                 id="password"
                 className="input"
                 value={password}
@@ -126,6 +145,8 @@ export default function Login() {
                 autoComplete="current-password"
                 disabled={submitting}
                 aria-invalid={!!error}
+                whileFocus={{ scale: 1.02, borderColor: 'var(--primary)' }}
+                transition={{ duration: 0.2 }}
               />
             </div>
             {error && (
@@ -133,9 +154,37 @@ export default function Login() {
                 {error}
               </div>
             )}
-            <button type="submit" className="btn btn-primary" disabled={submitting} aria-busy={submitting}>
-              {submitting ? 'Logging in…' : 'Login'}
-            </button>
+            <motion.button 
+              type="submit" 
+              className="btn btn-primary" 
+              disabled={submitting} 
+              aria-busy={submitting}
+              whileHover={!submitting ? { scale: 1.02 } : {}}
+              whileTap={!submitting ? { scale: 0.98 } : {}}
+              style={{
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                gap: 8
+              }}
+            >
+              {submitting ? (
+                <>
+                  <motion.div
+                    animate={{ rotate: 360 }}
+                    transition={{ duration: 1, repeat: Infinity, ease: 'linear' }}
+                  >
+                    <LogIn size={16} />
+                  </motion.div>
+                  Logging in…
+                </>
+              ) : (
+                <>
+                  <LogIn size={16} />
+                  Login
+                </>
+              )}
+            </motion.button>
           </form>
           <div style={{ display: 'flex', gap: 12, alignItems: 'center', marginTop: 14 }}>
             <span style={{ color: 'var(--muted)', fontSize: 13 }}>No account?</span>
@@ -157,7 +206,7 @@ export default function Login() {
             </a>
           </div>
         </div>
-      </div>
-    </div>
+      </motion.div>
+    </motion.div>
   )
 }

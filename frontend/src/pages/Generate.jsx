@@ -1,8 +1,11 @@
-import { useEffect, useMemo, useState } from 'react'
+import React, { useState, useEffect, useMemo } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { useToast } from '../services/toast.jsx'
 import api from '../services/api'
+import { useToast } from '../services/toast.jsx'
 import { GenerateSkeleton } from '../components/Skeleton.jsx'
+import TemplateSelector from '../components/TemplateSelector.jsx'
+import { motion, AnimatePresence } from 'framer-motion'
+import { Loader2, CheckCircle, AlertCircle, Clock, Zap, FileText, Briefcase } from 'lucide-react'
 
 export default function Generate() {
   const [jd, setJd] = useState('')
@@ -169,19 +172,10 @@ export default function Generate() {
         <div className="stack">
           <div className="card">
             <div className="card-body">
-              <div style={{ marginBottom: 10 }}>
-                <div className="label">Choose Template</div>
-                <div style={{ display: 'grid', gap: 10 }}>
-                  {templates.map(t => (
-                    <button type="button" key={t.id} className="card" onClick={() => setTemplate(t.id)} aria-pressed={template === t.id} style={{ borderWidth: template === t.id ? 2 : 1, borderColor: template === t.id ? 'var(--primary)' : 'var(--border)' }}>
-                      <div className="card-body" style={{ padding: '12px 14px' }}>
-                        <div style={{ fontWeight: 600 }}>{t.title}</div>
-                        <div style={{ fontSize: 12, color: 'var(--muted)' }}>{t.desc}</div>
-                      </div>
-                    </button>
-                  ))}
-                </div>
-              </div>
+              <TemplateSelector 
+                selectedTemplate={template} 
+                onTemplateSelect={setTemplate} 
+              />
               <div>
                 <label className="label" htmlFor="use-cv">Use CV</label>
                 <select id="use-cv" className="select" value={selectedCv} onChange={e=>setSelectedCv(e.target.value)}>
@@ -193,99 +187,282 @@ export default function Generate() {
               </div>
             </div>
           </div>
-          {jobId && (
-            <div className="card">
-              <div className="card-body">
-                <div><b>Job ID:</b> {jobId} — <b>Status:</b> {status}</div>
-                {(result.cover_id || result.cv_id) && (
-                  <div className="stack" style={{ marginTop: 8 }}>
-                    {result.cover_id && (
-                      <div>
-                        <b>Cover Letter:</b>
-                        <div style={{ display: 'flex', gap: 8, marginTop: 4, flexWrap: 'wrap' }}>
-                          <button className="btn" onClick={() => navigate(`/documents/${result.cover_id}/edit`)}>Edit</button>
-                          <button className="btn" onClick={async () => {
-                            try {
-                              const res = await api.get(`/documents/${result.cover_id}/download/`, { responseType: 'blob' })
-                              const url = window.URL.createObjectURL(new Blob([res.data]))
-                              const link = document.createElement('a')
-                              link.href = url
-                              link.setAttribute('download', `cover_letter_${jobId}.txt`)
-                              document.body.appendChild(link); link.click(); link.remove(); window.URL.revokeObjectURL(url)
-                              toast.success('TXT downloaded successfully')
-                            } catch (_) { toast.error('TXT download failed') }
-                          }}>TXT</button>
-                          <button className="btn" onClick={async () => {
-                            try {
-                              const res = await api.get(`/documents/${result.cover_id}/download/?fmt=docx`, { responseType: 'blob' })
-                              const url = window.URL.createObjectURL(new Blob([res.data]))
-                              const link = document.createElement('a')
-                              link.href = url
-                              link.setAttribute('download', `cover_letter_${jobId}.docx`)
-                              document.body.appendChild(link); link.click(); link.remove(); window.URL.revokeObjectURL(url)
-                              toast.success('DOCX downloaded successfully')
-                            } catch (_) { toast.error('DOCX download failed') }
-                          }}>DOCX</button>
-                          <button className="btn" onClick={async () => {
-                            try {
-                              const res = await api.get(`/documents/${result.cover_id}/download/?fmt=pdf`, { responseType: 'blob' })
-                              const url = window.URL.createObjectURL(new Blob([res.data]))
-                              const link = document.createElement('a')
-                              link.href = url
-                              link.setAttribute('download', `cover_letter_${jobId}.pdf`)
-                              document.body.appendChild(link); link.click(); link.remove(); window.URL.revokeObjectURL(url)
-                              toast.success('PDF downloaded successfully')
-                            } catch (_) { toast.error('PDF download failed') }
-                          }}>PDF</button>
-                        </div>
+          <AnimatePresence>
+            {jobId && (
+              <motion.div 
+                className="card"
+                initial={{ opacity: 0, y: 20 }}
+                animate={{ opacity: 1, y: 0 }}
+                exit={{ opacity: 0, y: -20 }}
+              >
+                <div className="card-body">
+                  {/* Status Header */}
+                  <div style={{ 
+                    display: 'flex', 
+                    alignItems: 'center', 
+                    gap: 12, 
+                    marginBottom: 16,
+                    paddingBottom: 16,
+                    borderBottom: '1px solid var(--border)'
+                  }}>
+                    <div style={{
+                      width: 40,
+                      height: 40,
+                      borderRadius: '50%',
+                      display: 'flex',
+                      alignItems: 'center',
+                      justifyContent: 'center',
+                      background: status === 'completed' ? 'var(--success)' : 
+                                 status === 'failed' ? 'var(--error)' : 
+                                 'var(--info)',
+                      color: 'white'
+                    }}>
+                      {status === 'running' && <Loader2 size={20} className="animate-spin" />}
+                      {status === 'completed' && <CheckCircle size={20} />}
+                      {status === 'failed' && <AlertCircle size={20} />}
+                      {status === 'pending' && <Clock size={20} />}
+                    </div>
+                    <div>
+                      <div style={{ fontWeight: 600, fontSize: 'var(--text-base)' }}>
+                        Generation {status === 'running' ? 'in Progress' : 
+                                  status === 'completed' ? 'Complete' :
+                                  status === 'failed' ? 'Failed' : 'Pending'}
                       </div>
-                    )}
-                    {result.cv_id && (
-                      <div>
-                        <b>Generated CV:</b>
-                        <div style={{ display: 'flex', gap: 8, marginTop: 4, flexWrap: 'wrap' }}>
-                          <button className="btn" onClick={() => navigate(`/documents/${result.cv_id}/edit`)}>Edit</button>
-                          <button className="btn" onClick={async () => {
-                            try {
-                              const res = await api.get(`/documents/${result.cv_id}/download/`, { responseType: 'blob' })
-                              const url = window.URL.createObjectURL(new Blob([res.data]))
-                              const link = document.createElement('a')
-                              link.href = url
-                              link.setAttribute('download', `generated_cv_${jobId}.txt`)
-                              document.body.appendChild(link); link.click(); link.remove(); window.URL.revokeObjectURL(url)
-                              toast.success('TXT downloaded successfully')
-                            } catch (_) { toast.error('TXT download failed') }
-                          }}>TXT</button>
-                          <button className="btn" onClick={async () => {
-                            try {
-                              const res = await api.get(`/documents/${result.cv_id}/download/?fmt=docx`, { responseType: 'blob' })
-                              const url = window.URL.createObjectURL(new Blob([res.data]))
-                              const link = document.createElement('a')
-                              link.href = url
-                              link.setAttribute('download', `generated_cv_${jobId}.docx`)
-                              document.body.appendChild(link); link.click(); link.remove(); window.URL.revokeObjectURL(url)
-                              toast.success('DOCX downloaded successfully')
-                            } catch (_) { toast.error('DOCX download failed') }
-                          }}>DOCX</button>
-                          <button className="btn" onClick={async () => {
-                            try {
-                              const res = await api.get(`/documents/${result.cv_id}/download/?fmt=pdf`, { responseType: 'blob' })
-                              const url = window.URL.createObjectURL(new Blob([res.data]))
-                              const link = document.createElement('a')
-                              link.href = url
-                              link.setAttribute('download', `generated_cv_${jobId}.pdf`)
-                              document.body.appendChild(link); link.click(); link.remove(); window.URL.revokeObjectURL(url)
-                              toast.success('PDF downloaded successfully')
-                            } catch (_) { toast.error('PDF download failed') }
-                          }}>PDF</button>
-                        </div>
+                      <div style={{ color: 'var(--muted)', fontSize: 'var(--text-sm)' }}>
+                        Job ID: {jobId}
                       </div>
-                    )}
+                    </div>
+                    <div style={{ marginLeft: 'auto' }}>
+                      <span className={`status-badge status-${
+                        status === 'completed' ? 'completed' :
+                        status === 'failed' ? 'error' :
+                        status === 'running' ? 'running' : 'pending'
+                      }`}>
+                        {status === 'running' && <Loader2 size={12} className="animate-spin" />}
+                        {status.charAt(0).toUpperCase() + status.slice(1)}
+                      </span>
+                    </div>
                   </div>
-                )}
-              </div>
-            </div>
-          )}
+
+                  {/* Progress Indicator */}
+                  {status === 'running' && (
+                    <motion.div
+                      initial={{ opacity: 0 }}
+                      animate={{ opacity: 1 }}
+                      style={{ marginBottom: 16 }}
+                    >
+                      <div style={{ 
+                        height: 4, 
+                        background: 'var(--bg-hover)', 
+                        borderRadius: 2, 
+                        overflow: 'hidden' 
+                      }}>
+                        <motion.div
+                          style={{
+                            height: '100%',
+                            background: 'linear-gradient(90deg, var(--info), var(--primary))',
+                            borderRadius: 2
+                          }}
+                          initial={{ width: '0%' }}
+                          animate={{ width: '100%' }}
+                          transition={{ duration: 2, repeat: Infinity, ease: 'easeInOut' }}
+                        />
+                      </div>
+                      <div style={{ 
+                        fontSize: 'var(--text-sm)', 
+                        color: 'var(--muted)', 
+                        marginTop: 8,
+                        display: 'flex',
+                        alignItems: 'center',
+                        gap: 8
+                      }}>
+                        <Zap size={14} />
+                        AI is crafting your documents...
+                      </div>
+                    </motion.div>
+                  )}
+
+                  {/* Results */}
+                  {(result.cover_id || result.cv_id) && (
+                    <motion.div 
+                      className="stack" 
+                      style={{ marginTop: 8 }}
+                      initial={{ opacity: 0, y: 10 }}
+                      animate={{ opacity: 1, y: 0 }}
+                      transition={{ delay: 0.2 }}
+                    >
+                      {result.cover_id && (
+                        <div style={{
+                          padding: 16,
+                          background: 'var(--bg-elev)',
+                          borderRadius: 12,
+                          border: '1px solid var(--border)'
+                        }}>
+                          <div style={{ 
+                            display: 'flex', 
+                            alignItems: 'center', 
+                            gap: 8, 
+                            marginBottom: 12 
+                          }}>
+                            <Briefcase size={18} style={{ color: 'var(--success)' }} />
+                            <span style={{ fontWeight: 600 }}>Cover Letter Generated</span>
+                          </div>
+                          <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+                            <motion.button 
+                              className="btn btn-primary"
+                              whileHover={{ scale: 1.05 }}
+                              whileTap={{ scale: 0.95 }}
+                              onClick={() => navigate(`/documents/${result.cover_id}/edit`)}
+                            >
+                              <FileText size={14} />
+                              Edit
+                            </motion.button>
+                            <motion.button 
+                              className="btn"
+                              whileHover={{ scale: 1.05 }}
+                              whileTap={{ scale: 0.95 }}
+                              onClick={async () => {
+                                try {
+                                  const res = await api.get(`/documents/${result.cover_id}/download/`, { responseType: 'blob' })
+                                  const url = window.URL.createObjectURL(new Blob([res.data]))
+                                  const link = document.createElement('a')
+                                  link.href = url
+                                  link.setAttribute('download', `cover_letter_${jobId}.txt`)
+                                  document.body.appendChild(link); link.click(); link.remove(); window.URL.revokeObjectURL(url)
+                                  toast.success('TXT downloaded successfully')
+                                } catch (_) { toast.error('TXT download failed') }
+                              }}
+                            >
+                              TXT
+                            </motion.button>
+                            <motion.button 
+                              className="btn"
+                              whileHover={{ scale: 1.05 }}
+                              whileTap={{ scale: 0.95 }}
+                              onClick={async () => {
+                                try {
+                                  const res = await api.get(`/documents/${result.cover_id}/download/?fmt=docx`, { responseType: 'blob' })
+                                  const url = window.URL.createObjectURL(new Blob([res.data]))
+                                  const link = document.createElement('a')
+                                  link.href = url
+                                  link.setAttribute('download', `cover_letter_${jobId}.docx`)
+                                  document.body.appendChild(link); link.click(); link.remove(); window.URL.revokeObjectURL(url)
+                                  toast.success('DOCX downloaded successfully')
+                                } catch (_) { toast.error('DOCX download failed') }
+                              }}
+                            >
+                              DOCX
+                            </motion.button>
+                            <motion.button 
+                              className="btn"
+                              whileHover={{ scale: 1.05 }}
+                              whileTap={{ scale: 0.95 }}
+                              onClick={async () => {
+                                try {
+                                  const res = await api.get(`/documents/${result.cover_id}/download/?fmt=pdf`, { responseType: 'blob' })
+                                  const url = window.URL.createObjectURL(new Blob([res.data]))
+                                  const link = document.createElement('a')
+                                  link.href = url
+                                  link.setAttribute('download', `cover_letter_${jobId}.pdf`)
+                                  document.body.appendChild(link); link.click(); link.remove(); window.URL.revokeObjectURL(url)
+                                  toast.success('PDF downloaded successfully')
+                                } catch (_) { toast.error('PDF download failed') }
+                              }}
+                            >
+                              PDF
+                            </motion.button>
+                          </div>
+                        </div>
+                      )}
+                      {result.cv_id && (
+                        <div style={{
+                          padding: 16,
+                          background: 'var(--bg-elev)',
+                          borderRadius: 12,
+                          border: '1px solid var(--border)'
+                        }}>
+                          <div style={{ 
+                            display: 'flex', 
+                            alignItems: 'center', 
+                            gap: 8, 
+                            marginBottom: 12 
+                          }}>
+                            <FileText size={18} style={{ color: 'var(--primary)' }} />
+                            <span style={{ fontWeight: 600 }}>CV Generated</span>
+                          </div>
+                          <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+                            <motion.button 
+                              className="btn btn-primary"
+                              whileHover={{ scale: 1.05 }}
+                              whileTap={{ scale: 0.95 }}
+                              onClick={() => navigate(`/documents/${result.cv_id}/edit`)}
+                            >
+                              <FileText size={14} />
+                              Edit
+                            </motion.button>
+                            <motion.button 
+                              className="btn"
+                              whileHover={{ scale: 1.05 }}
+                              whileTap={{ scale: 0.95 }}
+                              onClick={async () => {
+                                try {
+                                  const res = await api.get(`/documents/${result.cv_id}/download/`, { responseType: 'blob' })
+                                  const url = window.URL.createObjectURL(new Blob([res.data]))
+                                  const link = document.createElement('a')
+                                  link.href = url
+                                  link.setAttribute('download', `cv_${jobId}.txt`)
+                                  document.body.appendChild(link); link.click(); link.remove(); window.URL.revokeObjectURL(url)
+                                  toast.success('TXT downloaded successfully')
+                                } catch (_) { toast.error('TXT download failed') }
+                              }}
+                            >
+                              TXT
+                            </motion.button>
+                            <motion.button 
+                              className="btn"
+                              whileHover={{ scale: 1.05 }}
+                              whileTap={{ scale: 0.95 }}
+                              onClick={async () => {
+                                try {
+                                  const res = await api.get(`/documents/${result.cv_id}/download/?fmt=docx`, { responseType: 'blob' })
+                                  const url = window.URL.createObjectURL(new Blob([res.data]))
+                                  const link = document.createElement('a')
+                                  link.href = url
+                                  link.setAttribute('download', `cv_${jobId}.docx`)
+                                  document.body.appendChild(link); link.click(); link.remove(); window.URL.revokeObjectURL(url)
+                                  toast.success('DOCX downloaded successfully')
+                                } catch (_) { toast.error('DOCX download failed') }
+                              }}
+                            >
+                              DOCX
+                            </motion.button>
+                            <motion.button 
+                              className="btn"
+                              whileHover={{ scale: 1.05 }}
+                              whileTap={{ scale: 0.95 }}
+                              onClick={async () => {
+                                try {
+                                  const res = await api.get(`/documents/${result.cv_id}/download/?fmt=pdf`, { responseType: 'blob' })
+                                  const url = window.URL.createObjectURL(new Blob([res.data]))
+                                  const link = document.createElement('a')
+                                  link.href = url
+                                  link.setAttribute('download', `cv_${jobId}.pdf`)
+                                  document.body.appendChild(link); link.click(); link.remove(); window.URL.revokeObjectURL(url)
+                                  toast.success('PDF downloaded successfully')
+                                } catch (_) { toast.error('PDF download failed') }
+                              }}
+                            >
+                              PDF
+                            </motion.button>
+                          </div>
+                        </div>
+                      )}
+                    </motion.div>
+                  )}
+                </div>
+              </motion.div>
+            )}
+          </AnimatePresence>
         </div>
       </div>
     </div>

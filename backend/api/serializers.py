@@ -5,6 +5,7 @@ from .models import Profile, Document, JobDescription, GenerationJob
 
 class ProfileSerializer(serializers.ModelSerializer):
     photo_url = serializers.SerializerMethodField()
+    user = serializers.SerializerMethodField()
 
     class Meta:
         model = Profile
@@ -13,9 +14,10 @@ class ProfileSerializer(serializers.ModelSerializer):
             "full_name",
             "phone",
             "photo_url",
+            "user",
             "created_at",
         ]
-        read_only_fields = ["id", "created_at", "photo_url"]
+        read_only_fields = ["id", "created_at", "photo_url", "user"]
 
     def get_photo_url(self, obj):
         request = self.context.get("request")
@@ -23,6 +25,14 @@ class ProfileSerializer(serializers.ModelSerializer):
             url = reverse("profile-photo")
             return request.build_absolute_uri(url) if request else url
         return None
+
+    def get_user(self, obj):
+        return {
+            "id": obj.user.id,
+            "username": obj.user.username,
+            "email": obj.user.email,
+            "date_joined": obj.user.date_joined,
+        }
 
 
 class DocumentSerializer(serializers.ModelSerializer):

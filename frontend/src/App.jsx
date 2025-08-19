@@ -8,7 +8,7 @@ import Generate from './pages/Generate.jsx'
 import Editor from './pages/Editor.jsx'
 import Documents from './pages/Documents.jsx'
 import Layout from './components/Layout.jsx'
-import { AnimatePresence } from 'framer-motion'
+import { AnimatePresence, motion } from 'framer-motion'
 
 function Home() {
   return (
@@ -25,21 +25,213 @@ function Home() {
 
 function Dashboard() {
   const navigate = useNavigate()
-  const logout = () => {
-    try { api.logout() } catch(_) {}
-    // Force a full reload to clear any in-memory app state
-    if (typeof window !== 'undefined' && window.location) {
-      window.location.replace('/login')
-    } else {
-      navigate('/login')
+  const [stats, setStats] = useState({ cvs: 0, covers: 0, generations: 0 })
+  const [recentDocs, setRecentDocs] = useState([])
+  const [loading, setLoading] = useState(true)
+  
+  useEffect(() => {
+    const loadDashboard = async () => {
+      try {
+        const [cvRes, coverRes] = await Promise.all([
+          api.get('/cv/?doc_type=cv'),
+          api.get('/cv/?doc_type=cover')
+        ])
+        setStats({
+          cvs: cvRes.data?.length || 0,
+          covers: coverRes.data?.length || 0,
+          generations: (cvRes.data?.length || 0) + (coverRes.data?.length || 0)
+        })
+        // Get 3 most recent documents
+        const allDocs = [...(cvRes.data || []), ...(coverRes.data || [])]
+        const recent = allDocs
+          .sort((a, b) => new Date(b.created_at) - new Date(a.created_at))
+          .slice(0, 3)
+        setRecentDocs(recent)
+      } catch (e) {
+        console.error('Failed to load dashboard data:', e)
+      } finally {
+        setLoading(false)
+      }
     }
-  }
+    loadDashboard()
+  }, [])
+
+  const quickActions = [
+    { title: 'Generate New', desc: 'Create CV & Cover Letter', icon: '✨', path: '/generate', color: 'var(--primary)' },
+    { title: 'My Documents', desc: 'View all documents', icon: '📄', path: '/documents', color: 'var(--success)' },
+    { title: 'Profile', desc: 'Update your profile', icon: '👤', path: '/profile', color: 'var(--muted)' }
+  ]
+
   return (
-    <div>
-      <h2>Dashboard</h2>
-      <p>You're logged in.</p>
-      <button onClick={logout}>Logout</button>
-    </div>
+    <motion.div
+      initial={{ opacity: 0, y: 20 }}
+      animate={{ opacity: 1, y: 0 }}
+      transition={{ duration: 0.5 }}
+      style={{ maxWidth: 1080, margin: '0 auto' }}
+    >
+      <div style={{ marginBottom: 32 }}>
+        <h2 style={{ 
+          fontSize: 32, 
+          fontWeight: 700, 
+          margin: '0 0 8px 0',
+          background: 'linear-gradient(90deg, var(--primary), var(--success))',
+          WebkitBackgroundClip: 'text',
+          backgroundClip: 'text',
+          color: 'transparent'
+        }}>
+          Welcome back!
+        </h2>
+        <p style={{ color: 'var(--muted)', margin: 0, fontSize: 16 }}>
+          Ready to create your next professional document?
+        </p>
+      </div>
+
+      {/* Stats Cards */}
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: 16, marginBottom: 32 }}>
+        <motion.div 
+          className="card"
+          whileHover={{ scale: 1.02 }}
+          transition={{ duration: 0.2 }}
+        >
+          <div className="card-body" style={{ textAlign: 'center' }}>
+            <div style={{ fontSize: 28, marginBottom: 8 }}>📊</div>
+            <div style={{ fontSize: 24, fontWeight: 600, color: 'var(--primary)' }}>{loading ? '...' : stats.cvs}</div>
+            <div style={{ fontSize: 14, color: 'var(--muted)' }}>CVs Created</div>
+          </div>
+        </motion.div>
+        <motion.div 
+          className="card"
+          whileHover={{ scale: 1.02 }}
+          transition={{ duration: 0.2 }}
+        >
+          <div className="card-body" style={{ textAlign: 'center' }}>
+            <div style={{ fontSize: 28, marginBottom: 8 }}>💼</div>
+            <div style={{ fontSize: 24, fontWeight: 600, color: 'var(--success)' }}>{loading ? '...' : stats.covers}</div>
+            <div style={{ fontSize: 14, color: 'var(--muted)' }}>Cover Letters</div>
+          </div>
+        </motion.div>
+        <motion.div 
+          className="card"
+          whileHover={{ scale: 1.02 }}
+          transition={{ duration: 0.2 }}
+        >
+          <div className="card-body" style={{ textAlign: 'center' }}>
+            <div style={{ fontSize: 28, marginBottom: 8 }}>🎯</div>
+            <div style={{ fontSize: 24, fontWeight: 600, color: 'var(--text)' }}>{loading ? '...' : stats.generations}</div>
+            <div style={{ fontSize: 14, color: 'var(--muted)' }}>Total Documents</div>
+          </div>
+        </motion.div>
+      </div>
+
+      <div className="grid-2" style={{ gap: 24, alignItems: 'start' }}>
+        {/* Quick Actions */}
+        <div>
+          <h3 style={{ margin: '0 0 16px 0', fontSize: 20, fontWeight: 600 }}>Quick Actions</h3>
+          <div className="stack">
+            {quickActions.map((action, i) => (
+              <motion.div
+                key={action.path}
+                className="card"
+                whileHover={{ scale: 1.02, borderColor: action.color }}
+                whileTap={{ scale: 0.98 }}
+                onClick={() => navigate(action.path)}
+                style={{ cursor: 'pointer', transition: 'border-color 0.2s ease' }}
+                initial={{ opacity: 0, x: -20 }}
+                animate={{ opacity: 1, x: 0 }}
+                transition={{ delay: i * 0.1 }}
+              >
+                <div className="card-body" style={{ display: 'flex', alignItems: 'center', gap: 16 }}>
+                  <div style={{ 
+                    fontSize: 24, 
+                    width: 48, 
+                    height: 48, 
+                    display: 'flex', 
+                    alignItems: 'center', 
+                    justifyContent: 'center',
+                    background: 'var(--bg-elev)',
+                    borderRadius: 12,
+                    border: `2px solid ${action.color}`
+                  }}>
+                    {action.icon}
+                  </div>
+                  <div style={{ flex: 1 }}>
+                    <div style={{ fontWeight: 600, marginBottom: 4 }}>{action.title}</div>
+                    <div style={{ fontSize: 14, color: 'var(--muted)' }}>{action.desc}</div>
+                  </div>
+                  <div style={{ color: 'var(--muted)', fontSize: 18 }}>→</div>
+                </div>
+              </motion.div>
+            ))}
+          </div>
+        </div>
+
+        {/* Recent Documents */}
+        <div>
+          <h3 style={{ margin: '0 0 16px 0', fontSize: 20, fontWeight: 600 }}>Recent Documents</h3>
+          {loading ? (
+            <div className="card">
+              <div className="card-body" style={{ textAlign: 'center', color: 'var(--muted)' }}>
+                Loading recent documents...
+              </div>
+            </div>
+          ) : recentDocs.length === 0 ? (
+            <div className="card">
+              <div className="card-body" style={{ textAlign: 'center', color: 'var(--muted)' }}>
+                <div style={{ fontSize: 48, marginBottom: 16 }}>📝</div>
+                <div>No documents yet</div>
+                <div style={{ fontSize: 14, marginTop: 8 }}>
+                  <Link to="/generate" style={{ color: 'var(--primary)' }}>Create your first document</Link>
+                </div>
+              </div>
+            </div>
+          ) : (
+            <div className="stack">
+              {recentDocs.map((doc, i) => (
+                <motion.div
+                  key={doc.id}
+                  className="card"
+                  whileHover={{ scale: 1.01 }}
+                  initial={{ opacity: 0, y: 10 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  transition={{ delay: i * 0.1 }}
+                >
+                  <div className="card-body" style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+                    <div style={{ 
+                      fontSize: 20,
+                      width: 36,
+                      height: 36,
+                      display: 'flex',
+                      alignItems: 'center',
+                      justifyContent: 'center',
+                      background: doc.doc_type === 'cv' ? 'rgba(59, 130, 246, 0.1)' : 'rgba(16, 185, 129, 0.1)',
+                      borderRadius: 8,
+                      color: doc.doc_type === 'cv' ? 'var(--primary)' : 'var(--success)'
+                    }}>
+                      {doc.doc_type === 'cv' ? '📄' : '💼'}
+                    </div>
+                    <div style={{ flex: 1 }}>
+                      <div style={{ fontWeight: 600, fontSize: 14 }}>
+                        v{doc.version} — {doc.file_name}
+                      </div>
+                      <div style={{ fontSize: 12, color: 'var(--muted)' }}>
+                        {new Date(doc.created_at).toLocaleDateString()}
+                      </div>
+                    </div>
+                    <Link 
+                      to={`/documents/${doc.id}/edit`}
+                      className="btn"
+                      style={{ fontSize: 12, padding: '6px 12px' }}
+                    >
+                      Edit
+                    </Link>
+                  </div>
+                </motion.div>
+              ))}
+            </div>
+          )}
+        </div>
+      </div>
+    </motion.div>
   )
 }
 
