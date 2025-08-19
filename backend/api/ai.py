@@ -13,6 +13,51 @@ from dataclasses import dataclass
 import pickle
 import logging
 
+# ML Quality Prediction
+try:
+    from .ml_quality_predictor import (
+        predict_generation_quality,
+        collect_quality_feedback,
+        feature_extractor,
+        QualityFeatures
+    )
+    ML_QUALITY_ENABLED = True
+except ImportError as e:
+    logging.warning(f"ML quality prediction disabled: {e}")
+    ML_QUALITY_ENABLED = False
+
+# A/B Testing Framework
+try:
+    from .ab_testing import (
+        assign_generation_variant,
+        record_generation_metrics,
+        ab_test_manager
+    )
+    AB_TESTING_ENABLED = True
+except ImportError as e:
+    logging.warning(f"A/B testing disabled: {e}")
+    AB_TESTING_ENABLED = False
+
+# Semantic Caching
+try:
+    from .semantic_cache import (
+        get_semantic_cached_response,
+        cache_semantic_response,
+        semantic_cache
+    )
+    SEMANTIC_CACHE_ENABLED = True
+except ImportError as e:
+    logging.warning(f"Semantic caching disabled: {e}")
+    SEMANTIC_CACHE_ENABLED = False
+
+# Multi-Modal Generation
+try:
+    from .multimodal_generation import generate_formatted_content
+    MULTIMODAL_ENABLED = True
+except ImportError as e:
+    logging.warning(f"Multi-modal generation disabled: {e}")
+    MULTIMODAL_ENABLED = False
+
 # AI wrapper with deterministic dry-run default.
 
 DEFAULT_PROVIDER = "gemini"
@@ -2151,17 +2196,57 @@ def _build_cv_prompt(jd_text: str, cv_text: str | None, template: str = "classic
     )
 
 
-def generate_cover_letter(jd_text: str, cv_text: str | None = None) -> Tuple[str, str, List[Dict]]:
+def generate_cover_letter(jd_text: str, cv_text: str | None = None, user_id: str = "anonymous") -> Tuple[str, str, List[Dict]]:
     """
     Returns (provider_used, content, trace)
-    - Enhanced with caching, retry logic, and provider health tracking
+    - Enhanced with ML quality prediction, A/B testing, and semantic caching
     - Uses AI_DRY_RUN=true (default) to return deterministic content without external calls.
     """
     ai_dry_run = _bool_env("AI_DRY_RUN", True)
     trace: List[Dict] = []
     
-    # Build prompt for caching
-    prompt = _build_cover_prompt(jd_text or "", cv_text or "")
+    # A/B Testing: Assign variant
+    generation_variant = "control"
+    if AB_TESTING_ENABLED:
+        generation_variant = assign_generation_variant(user_id, "cover_letter")
+        trace.append({"ab_test_variant": generation_variant})
+    
+    # Build prompt for caching (variant-aware)
+    prompt = _build_cover_prompt(jd_text or "", cv_text or "", variant=generation_variant)
+    
+    # Semantic Caching: Check for similar cached responses
+    if SEMANTIC_CACHE_ENABLED:
+        cached_response = get_semantic_cached_response(
+            prompt, 
+            "cover_letter", 
+            {"variant": generation_variant, "industry": _detect_industry(jd_text)}
+        )
+        if cached_response:
+            trace.append({"provider": "semantic_cache", "status": "hit", "duration_ms": 0})
+            return "semantic_cache", cached_response, trace
+    
+    # ML Quality Prediction: Predict quality before generation
+    ml_prediction = None
+    if ML_QUALITY_ENABLED:
+        try:
+            cv_extraction_result = extract_cv_content_with_caching(cv_text or "")
+            structured_cv = cv_extraction_result["structured_content"]
+            skills_match = _calculate_skills_job_match(structured_cv.get("skills", []), jd_text, _extract_key_requirements(jd_text))
+            scored_experience = _score_experience_relevance(structured_cv.get("experience", []), jd_text, _extract_key_requirements(jd_text))
+            
+            ml_prediction = predict_generation_quality(
+                jd_text=jd_text,
+                cv_text=cv_text or "",
+                industry=_detect_industry(jd_text),
+                template="standard",
+                variant=generation_variant,
+                provider="predicted",
+                skills_match=skills_match,
+                experience_scores=scored_experience
+            )
+            trace.append({"ml_prediction": ml_prediction})
+        except Exception as e:
+            logging.warning(f"ML quality prediction failed: {e}")
     
     if ai_dry_run:
         # Enhanced mock response with industry detection
@@ -2227,12 +2312,42 @@ def generate_cover_letter(jd_text: str, cv_text: str | None = None) -> Tuple[str
             # Calculate quality score for generated content
             quality_scores = _calculate_content_quality_score(out, jd_text, _detect_industry(jd_text), "cover_letter")
             
+            # ML Quality Prediction and Feedback Collection
+            ml_prediction = None
+            if ML_QUALITY_ENABLED:
+                try:
+                    # Extract features for ML feedback
+                    cv_extraction_result = extract_cv_content_with_caching(cv_text or "")
+                    structured_cv = cv_extraction_result["structured_content"]
+                    skills_match = _calculate_skills_job_match(structured_cv.get("skills", []), jd_text, _extract_key_requirements(jd_text))
+                    scored_experience = _score_experience_relevance(structured_cv.get("experience", []), jd_text, _extract_key_requirements(jd_text))
+                    
+                    features = feature_extractor.extract_features(
+                        jd_text=jd_text,
+                        cv_text=cv_text or "",
+                        generated_content=out,
+                        industry=_detect_industry(jd_text),
+                        template="standard",
+                        variant="standard",
+                        provider=provider,
+                        generation_time_ms=dt,
+                        skills_match=skills_match,
+                        experience_scores=scored_experience
+                    )
+                    
+                    # Collect feedback for model training
+                    collect_quality_feedback(features, out, quality_scores)
+                    
+                except Exception as e:
+                    logging.warning(f"ML quality feedback collection failed: {e}")
+            
             trace.append({
                 "provider": provider, 
                 "status": "success", 
                 "duration_ms": dt,
                 "quality_score": quality_scores["overall"],
-                "quality_breakdown": quality_scores
+                "quality_breakdown": quality_scores,
+                "ml_prediction": ml_prediction
             })
             return provider, out, trace
             
