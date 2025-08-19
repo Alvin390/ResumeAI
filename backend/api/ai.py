@@ -1,15 +1,16 @@
 import os
 import re
 import time
+import html
 import json
 import hashlib
-import requests
-import html
-import bleach
-from typing import Dict, List, Tuple, Optional
-from functools import lru_cache
-from collections import defaultdict
 import threading
+from collections import defaultdict
+from datetime import datetime, timedelta
+from typing import Dict, List, Optional, Tuple, Union
+from functools import lru_cache
+from dataclasses import dataclass
+import pickle
 import logging
 
 # AI wrapper with deterministic dry-run default.
@@ -21,12 +22,18 @@ _ai_cache = {}
 CACHE_MAX_SIZE = 100
 CACHE_TTL_SECONDS = 3600  # 1 hour
 
-# AI provider health tracking
+# Global rate limiting and health tracking
+RATE_LIMIT_LOCK = threading.Lock()
 PROVIDER_HEALTH = {
-    "gemini": {"failures": 0, "last_success": None, "last_failure": None},
-    "deepseek": {"failures": 0, "last_success": None, "last_failure": None},
-    "groq": {"failures": 0, "last_success": None, "last_failure": None},
+    "gemini": {"failures": 0, "last_success": 0, "last_failure": 0},
+    "deepseek": {"failures": 0, "last_success": 0, "last_failure": 0},
+    "groq": {"failures": 0, "last_success": 0, "last_failure": 0}
 }
+
+# CV content caching
+CV_CACHE = {}
+CACHE_LOCK = threading.Lock()
+CACHE_TTL = 3600  # 1 hour cache TTL
 
 # Rate limiting tracking
 RATE_LIMITS = defaultdict(lambda: {"requests": [], "daily_count": 0, "last_reset": time.time()})
@@ -835,18 +842,23 @@ def _extract_contacts_advanced(cv_text: str | None) -> Dict[str, any]:
     text = cv_text.strip()
     lines = [line.strip() for line in text.splitlines() if line.strip()]
     
-    # Strategy 1: Header-based extraction (first 5 lines)
+    # Strategy 1: Enhanced header-based extraction (first 7 lines for international CVs)
     header_candidates = []
-    for i, line in enumerate(lines[:5]):
+    for i, line in enumerate(lines[:7]):
         # Skip lines with common non-name patterns
         if re.search(r'(resume|cv|curriculum|email|phone|address|objective|summary)', line.lower()):
             continue
         
-        # Look for name-like patterns with error handling
+        # Enhanced name patterns for international support
         name_patterns = [
             r'^([A-Z][a-z]+ [A-Z][a-z]+(?:\s+[A-Z][a-z]+)?)$',  # First Last [Middle]
             r'^([A-Z][A-Z\s]{10,40})$',  # ALL CAPS NAME
-            r'^([A-Za-z\u00C0-\u017F][A-Za-z\u00C0-\u017F\s\'.,-]{5,50})$'  # General pattern with accents
+            r'^([A-Za-z\u00C0-\u017F][A-Za-z\u00C0-\u017F\s\'.,-]{5,50})$',  # General pattern with accents
+            r'^([\u4e00-\u9fff]{2,8})$',  # Chinese names (2-8 characters)
+            r'^([\u0600-\u06ff\s]{3,30})$',  # Arabic names
+            r'^([\u0900-\u097f\s]{3,30})$',  # Hindi/Devanagari names
+            r'^([A-Za-z\u00C0-\u017F]+(?:[-\s][A-Za-z\u00C0-\u017F]+){1,3})$',  # Hyphenated European names
+            r'^([A-Za-z]+\s+(?:van|de|der|von|da|del|dos|ibn)\s+[A-Za-z]+)$'  # Names with particles
         ]
         
         for pattern in name_patterns:
@@ -855,7 +867,7 @@ def _extract_contacts_advanced(cv_text: str | None) -> Dict[str, any]:
                 if match:
                     candidate = match.group(1).strip()
                     confidence = _score_name_candidate(candidate, lines)
-                    if confidence > 0.3:
+                    if confidence > 0.25:  # Lower threshold for international names
                         header_candidates.append((candidate, confidence, i))
             except re.error:
                 continue
@@ -968,6 +980,211 @@ def _extract_contacts(cv_text: str | None) -> Dict[str, str]:
     }
 
 
+def _extract_structured_cv_content(cv_text: str) -> Dict[str, any]:
+    """Extract structured content from CV including skills, experience, and education."""
+    if not cv_text:
+        return {"skills": [], "experience": [], "education": [], "sections": {}}
+    
+    text = cv_text.strip()
+    lines = [line.strip() for line in text.splitlines() if line.strip()]
+    
+    # Initialize result structure
+    result = {
+        "skills": [],
+        "experience": [],
+        "education": [],
+        "sections": {},
+        "achievements": []
+    }
+    
+    # Section detection patterns
+    section_patterns = {
+        "skills": r"(?:technical\s+)?skills?|competenc(?:ies|y)|technologies?",
+        "experience": r"(?:work\s+)?experience|employment|professional\s+(?:experience|background)",
+        "education": r"education(?:al\s+background)?|academic|qualifications?",
+        "achievements": r"achievements?|accomplishments?"
+    }
+    
+    current_section = None
+    section_content = []
+    
+    # Parse sections
+    for line in lines:
+        line_lower = line.lower()
+        detected_section = None
+        
+        for section_name, pattern in section_patterns.items():
+            try:
+                if re.search(f"^{pattern}\s*:?\s*$", line_lower):
+                    detected_section = section_name
+                    break
+            except re.error:
+                continue
+        
+        if detected_section:
+            if current_section and section_content:
+                result["sections"][current_section] = "\n".join(section_content)
+                _parse_section_content(result, current_section, section_content)
+            current_section = detected_section
+            section_content = []
+        else:
+            if current_section:
+                section_content.append(line)
+    
+    if current_section and section_content:
+        result["sections"][current_section] = "\n".join(section_content)
+        _parse_section_content(result, current_section, section_content)
+    
+    if not result["skills"]:
+        result["skills"] = _extract_skills_from_text(text)
+    
+    result["achievements"] = _extract_achievements(text)
+    
+    return result
+
+
+def _parse_section_content(result: Dict, section_name: str, content: List[str]) -> None:
+    """Parse specific section content based on section type."""
+    text = "\n".join(content)
+    
+    if section_name == "skills":
+        result["skills"] = _extract_skills_from_text(text)
+    elif section_name == "experience":
+        result["experience"] = _extract_work_experience(text)
+    elif section_name == "education":
+        result["education"] = _extract_education(text)
+
+
+def _extract_skills_from_text(text: str) -> List[Dict[str, str]]:
+    """Extract technical and soft skills from text with enhanced patterns."""
+    if not text:
+        return []
+    
+    skills = []
+    
+    # Comprehensive technical skills patterns
+    tech_patterns = [
+        # Programming Languages
+        r"\b(Python|Java|JavaScript|TypeScript|C\+\+|C#|PHP|Ruby|Go|Rust|Swift|Kotlin|Scala|R|MATLAB)\b",
+        # Web Frameworks
+        r"\b(React|Angular|Vue|Node\.js|Express|Django|Flask|Spring|Laravel|FastAPI|Next\.js|Nuxt\.js)\b",
+        # Cloud & DevOps
+        r"\b(AWS|Azure|GCP|Google Cloud|Docker|Kubernetes|Jenkins|Terraform|Ansible|Chef|Puppet)\b",
+        # Databases
+        r"\b(MySQL|PostgreSQL|MongoDB|Redis|Elasticsearch|Cassandra|Oracle|SQL Server|DynamoDB)\b",
+        # Frontend Technologies
+        r"\b(HTML|CSS|SASS|SCSS|Bootstrap|Tailwind|jQuery|Webpack|Babel|Vite)\b",
+        # Data Science & AI
+        r"\b(Machine Learning|AI|Data Science|TensorFlow|PyTorch|Pandas|NumPy|Scikit-learn|Jupyter)\b",
+        # Tools & Methodologies
+        r"\b(Git|GitHub|GitLab|Jira|Confluence|Slack|Agile|Scrum|DevOps|CI/CD|REST|GraphQL|API)\b",
+        # Mobile Development
+        r"\b(iOS|Android|React Native|Flutter|Xamarin|Ionic)\b"
+    ]
+    
+    for pattern in tech_patterns:
+        try:
+            matches = re.findall(pattern, text, re.I)
+            for match in matches:
+                if match not in [s["name"] for s in skills]:
+                    skills.append({"name": match, "type": "technical", "context": "pattern_match"})
+        except re.error:
+            continue
+    
+    # Extract skills from bullet points and structured lists
+    try:
+        # Skills in bullet format
+        bullet_skills = re.findall(r"[•\-\*]\s*([A-Za-z][A-Za-z\s&+#.]{2,25})(?:\s*[,;]|$)", text)
+        for skill in bullet_skills:
+            skill = skill.strip()
+            if len(skill) > 2 and skill not in [s["name"] for s in skills]:
+                skills.append({"name": skill, "type": "general", "context": "bullet_point"})
+        
+        # Skills in comma-separated format
+        skill_sections = re.findall(r"(?:skills?|technologies?|tools?)\s*:?\s*([^\n]{20,200})", text, re.I)
+        for section in skill_sections:
+            comma_skills = [s.strip() for s in section.split(',') if len(s.strip()) > 2]
+            for skill in comma_skills[:10]:  # Limit per section
+                if skill not in [s["name"] for s in skills]:
+                    skills.append({"name": skill, "type": "listed", "context": "skills_section"})
+    
+    except re.error:
+        pass
+    
+    return skills[:25]  # Increased limit for comprehensive extraction
+
+
+def _extract_work_experience(text: str) -> List[Dict[str, str]]:
+    """Extract work experience entries."""
+    if not text:
+        return []
+    
+    experiences = []
+    lines = [line.strip() for line in text.splitlines() if line.strip()]
+    
+    for line in lines:
+        try:
+            title_company_match = re.search(r"^(.+?)\s+at\s+(.+?)(?:\s*[|,]\s*(.+))?$", line)
+            if title_company_match:
+                experiences.append({
+                    "title": title_company_match.group(1).strip(),
+                    "company": title_company_match.group(2).strip(),
+                    "duration": title_company_match.group(3).strip() if title_company_match.group(3) else ""
+                })
+        except re.error:
+            continue
+    
+    return experiences[:5]
+
+
+def _extract_education(text: str) -> List[Dict[str, str]]:
+    """Extract education entries."""
+    if not text:
+        return []
+    
+    education = []
+    lines = [line.strip() for line in text.splitlines() if line.strip()]
+    
+    for line in lines:
+        try:
+            degree_match = re.search(r"(Bachelor|Master|PhD).*?(?:from\s+)?(.+?)(?:\s*(\d{4}))?$", line, re.I)
+            if degree_match:
+                education.append({
+                    "degree": degree_match.group(1),
+                    "institution": degree_match.group(2).strip(),
+                    "year": degree_match.group(3) if degree_match.group(3) else ""
+                })
+        except re.error:
+            continue
+    
+    return education[:3]
+
+
+def _extract_achievements(text: str) -> List[Dict[str, str]]:
+    """Extract quantified achievements."""
+    if not text:
+        return []
+    
+    achievements = []
+    patterns = [
+        r"(?:increased|improved|reduced)\s+.{10,80}?\s+(\d+(?:%|\$|k))",
+        r"(?:managed|led)\s+(?:team of\s+)?(\d+)\s+(?:people|employees)"
+    ]
+    
+    for pattern in patterns:
+        try:
+            matches = re.finditer(pattern, text, re.I)
+            for match in matches:
+                achievements.append({
+                    "text": match.group(0),
+                    "metric": match.group(1) if match.groups() else ""
+                })
+        except re.error:
+            continue
+    
+    return achievements[:10]
+
+
 def _extract_company_name(jd_text: str) -> str:
     """Extract company name from job description."""
     if not jd_text:
@@ -1026,6 +1243,606 @@ def _extract_key_requirements(jd_text: str) -> List[str]:
             continue
     
     return list(set(requirements))[:10]
+
+
+def _intelligent_cv_truncation(cv_text: str, max_length: int = 4000) -> str:
+    """Intelligently truncate CV content while preserving important sections."""
+    if not cv_text or len(cv_text) <= max_length:
+        return cv_text
+    
+    # Extract structured content first
+    structured = _extract_structured_cv_content(cv_text)
+    
+    # Priority order for sections
+    section_priority = ["skills", "experience", "achievements", "education"]
+    
+    # Start with contact information (first 200 chars)
+    truncated = cv_text[:200]
+    remaining_length = max_length - len(truncated)
+    
+    # Add sections by priority
+    for section_name in section_priority:
+        if section_name in structured["sections"]:
+            section_content = structured["sections"][section_name]
+            
+            if len(section_content) <= remaining_length - 100:
+                truncated += f"\n\n{section_name.upper()}\n{section_content}"
+                remaining_length -= len(section_content) + len(section_name) + 4
+            else:
+                # Truncate section intelligently
+                if section_name == "experience":
+                    lines = section_content.split('\n')[:10]  # Keep recent experiences
+                    important_lines = []
+                    current_length = 0
+                    
+                    for line in lines:
+                        if current_length + len(line) < remaining_length - 100:
+                            important_lines.append(line)
+                            current_length += len(line) + 1
+                        else:
+                            break
+                    
+                    if important_lines:
+                        truncated += f"\n\n{section_name.upper()}\n" + '\n'.join(important_lines)
+                        remaining_length -= current_length + len(section_name) + 4
+            
+            if remaining_length <= 100:
+                break
+    
+    return truncated[:max_length]
+
+
+def _validate_cv_content_ownership(cv_contacts: Dict, user_profile: Dict) -> Dict[str, float]:
+    """Validate that extracted CV contacts belong to the user profile."""
+    validation_scores = {
+        "email_match": 0.0,
+        "name_similarity": 0.0,
+        "overall_confidence": 0.0
+    }
+    
+    if not cv_contacts or not user_profile:
+        return validation_scores
+    
+    # Email validation
+    cv_email = cv_contacts.get("email", "").lower()
+    profile_email = user_profile.get("email", "").lower()
+    
+    if cv_email and profile_email:
+        if cv_email == profile_email:
+            validation_scores["email_match"] = 1.0
+        elif cv_email.split('@')[0] == profile_email.split('@')[0]:  # Same username
+            validation_scores["email_match"] = 0.8
+        elif cv_email.split('@')[1] == profile_email.split('@')[1]:  # Same domain
+            validation_scores["email_match"] = 0.3
+    
+    # Name similarity validation
+    cv_name = cv_contacts.get("name", "").lower()
+    profile_name = f"{user_profile.get('first_name', '')} {user_profile.get('last_name', '')}".strip().lower()
+    
+    if cv_name and profile_name:
+        cv_name_parts = set(cv_name.split())
+        profile_name_parts = set(profile_name.split())
+        
+        if cv_name_parts == profile_name_parts:
+            validation_scores["name_similarity"] = 1.0
+        elif cv_name_parts.intersection(profile_name_parts):
+            overlap = len(cv_name_parts.intersection(profile_name_parts))
+            total = len(cv_name_parts.union(profile_name_parts))
+            validation_scores["name_similarity"] = overlap / total if total > 0 else 0.0
+    
+    # Calculate overall confidence
+    validation_scores["overall_confidence"] = (
+        validation_scores["email_match"] * 0.7 + 
+        validation_scores["name_similarity"] * 0.3
+    )
+    
+    return validation_scores
+
+
+def _calculate_skills_job_match(cv_skills: List[Dict], jd_text: str, jd_requirements: List[str]) -> Dict[str, any]:
+    """Calculate skills-to-job matching with relevance scoring."""
+    if not cv_skills or not jd_text:
+        return {"matched_skills": [], "missing_skills": [], "match_score": 0.0, "skill_gaps": []}
+    
+    jd_lower = jd_text.lower()
+    
+    # Extract skills from job description
+    jd_skill_patterns = [
+        r"\b(Python|Java|JavaScript|TypeScript|C\+\+|C#|PHP|Ruby|Go|Rust|Swift|Kotlin|Scala)\b",
+        r"\b(React|Angular|Vue|Node\.js|Express|Django|Flask|Spring|Laravel|FastAPI)\b",
+        r"\b(AWS|Azure|GCP|Google Cloud|Docker|Kubernetes|Jenkins|Git|GitHub|GitLab)\b",
+        r"\b(MySQL|PostgreSQL|MongoDB|Redis|Elasticsearch|Cassandra|Oracle|SQL Server)\b",
+        r"\b(HTML|CSS|SASS|SCSS|Bootstrap|Tailwind|jQuery|Webpack|Babel)\b",
+        r"\b(Machine Learning|AI|Data Science|TensorFlow|PyTorch|Pandas|NumPy|Scikit-learn)\b",
+        r"\b(Agile|Scrum|DevOps|CI/CD|Microservices|REST|GraphQL|API)\b"
+    ]
+    
+    jd_skills = set()
+    for pattern in jd_skill_patterns:
+        try:
+            matches = re.findall(pattern, jd_text, re.I)
+            jd_skills.update(match.lower() for match in matches)
+        except re.error:
+            continue
+    
+    # Add skills from requirements
+    for req in jd_requirements:
+        try:
+            tech_terms = re.findall(r"\b[A-Z][A-Za-z+#.]{2,20}\b", req)
+            jd_skills.update(term.lower() for term in tech_terms)
+        except re.error:
+            continue
+    
+    # Match CV skills against job requirements
+    matched_skills = []
+    cv_skill_names = {skill["name"].lower() for skill in cv_skills}
+    
+    for skill in cv_skills:
+        skill_name = skill["name"].lower()
+        relevance_score = 0.0
+        
+        # Direct match in JD skills
+        if skill_name in jd_skills:
+            relevance_score = 1.0
+        # Partial match in job description text
+        elif skill_name in jd_lower:
+            relevance_score = 0.8
+        # Fuzzy match for similar technologies
+        else:
+            for jd_skill in jd_skills:
+                if _calculate_skill_similarity(skill_name, jd_skill) > 0.7:
+                    relevance_score = 0.6
+                    break
+        
+        if relevance_score > 0:
+            matched_skills.append({
+                "name": skill["name"],
+                "type": skill.get("type", "general"),
+                "relevance_score": relevance_score,
+                "context": skill.get("context", "")
+            })
+    
+    # Identify missing critical skills
+    missing_skills = []
+    for jd_skill in jd_skills:
+        if jd_skill not in cv_skill_names:
+            # Check if it's a critical skill (appears multiple times or in requirements)
+            frequency = jd_lower.count(jd_skill)
+            if frequency > 1 or any(jd_skill in req.lower() for req in jd_requirements):
+                missing_skills.append({
+                    "name": jd_skill.title(),
+                    "frequency": frequency,
+                    "criticality": "high" if frequency > 2 else "medium"
+                })
+    
+    # Calculate overall match score
+    if jd_skills:
+        match_score = len([s for s in matched_skills if s["relevance_score"] >= 0.8]) / len(jd_skills)
+    else:
+        match_score = 0.0
+    
+    # Identify skill gaps and recommendations
+    skill_gaps = []
+    for missing in missing_skills[:5]:  # Top 5 missing skills
+        similar_skills = [s["name"] for s in cv_skills if _calculate_skill_similarity(s["name"].lower(), missing["name"].lower()) > 0.5]
+        skill_gaps.append({
+            "missing_skill": missing["name"],
+            "similar_existing": similar_skills[:2],
+            "recommendation": f"Consider highlighting {missing['name']} experience" if similar_skills else f"Consider acquiring {missing['name']} skills"
+        })
+    
+    return {
+        "matched_skills": sorted(matched_skills, key=lambda x: x["relevance_score"], reverse=True),
+        "missing_skills": missing_skills[:10],
+        "match_score": min(1.0, match_score),
+        "skill_gaps": skill_gaps
+    }
+
+
+def _calculate_skill_similarity(skill1: str, skill2: str) -> float:
+    """Calculate similarity between two skills using simple string matching."""
+    if skill1 == skill2:
+        return 1.0
+    
+    # Check for common abbreviations and variations
+    skill_mappings = {
+        "js": "javascript",
+        "ts": "typescript",
+        "py": "python",
+        "react.js": "react",
+        "vue.js": "vue",
+        "node": "node.js",
+        "postgres": "postgresql",
+        "mongo": "mongodb"
+    }
+    
+    normalized1 = skill_mappings.get(skill1, skill1)
+    normalized2 = skill_mappings.get(skill2, skill2)
+    
+    if normalized1 == normalized2:
+        return 0.9
+    
+    # Simple substring matching
+    if skill1 in skill2 or skill2 in skill1:
+        return 0.7
+    
+    # Character overlap ratio
+    common_chars = set(normalized1) & set(normalized2)
+    total_chars = set(normalized1) | set(normalized2)
+    
+    return len(common_chars) / len(total_chars) if total_chars else 0.0
+
+
+def _score_experience_relevance(experiences: List[Dict], jd_text: str, jd_requirements: List[str]) -> List[Dict]:
+    """Score work experience entries based on job relevance."""
+    if not experiences or not jd_text:
+        return experiences
+    
+    jd_lower = jd_text.lower()
+    
+    # Extract key terms from job description
+    jd_keywords = set()
+    
+    # Industry-specific terms
+    industry_patterns = {
+        "tech": r"\b(software|developer|engineer|programming|coding|technical|system|platform|architecture)\b",
+        "management": r"\b(manage|lead|supervise|direct|coordinate|oversee|strategy|planning)\b",
+        "sales": r"\b(sales|revenue|client|customer|business development|account|relationship)\b",
+        "marketing": r"\b(marketing|campaign|brand|digital|social media|analytics|growth)\b"
+    }
+    
+    for pattern in industry_patterns.values():
+        try:
+            matches = re.findall(pattern, jd_text, re.I)
+            jd_keywords.update(match.lower() for match in matches)
+        except re.error:
+            continue
+    
+    # Score each experience
+    scored_experiences = []
+    for exp in experiences:
+        relevance_score = 0.0
+        matching_keywords = []
+        
+        # Check title relevance
+        title = exp.get("title", "").lower()
+        for keyword in jd_keywords:
+            if keyword in title:
+                relevance_score += 0.3
+                matching_keywords.append(keyword)
+        
+        # Check company/industry relevance
+        company = exp.get("company", "").lower()
+        if any(keyword in company for keyword in jd_keywords):
+            relevance_score += 0.2
+        
+        # Check description relevance
+        description = " ".join(exp.get("description", [])).lower()
+        for keyword in jd_keywords:
+            if keyword in description:
+                relevance_score += 0.1
+                if keyword not in matching_keywords:
+                    matching_keywords.append(keyword)
+        
+        # Bonus for recent experience (if duration available)
+        duration = exp.get("duration", "")
+        if "2023" in duration or "2024" in duration or "present" in duration.lower() or "current" in duration.lower():
+            relevance_score += 0.2
+        
+        scored_experiences.append({
+            **exp,
+            "relevance_score": min(1.0, relevance_score),
+            "matching_keywords": matching_keywords[:5],
+            "relevance_reasons": _generate_relevance_reasons(exp, matching_keywords)
+        })
+    
+    # Sort by relevance score
+    return sorted(scored_experiences, key=lambda x: x["relevance_score"], reverse=True)
+
+
+def _generate_relevance_reasons(experience: Dict, matching_keywords: List[str]) -> List[str]:
+    """Generate human-readable reasons for experience relevance."""
+    reasons = []
+    
+    if matching_keywords:
+        reasons.append(f"Relevant keywords: {', '.join(matching_keywords[:3])}")
+    
+    title = experience.get("title", "")
+    if any(keyword in title.lower() for keyword in ["senior", "lead", "manager", "director"]):
+        reasons.append("Leadership experience")
+    
+    duration = experience.get("duration", "")
+    if "present" in duration.lower() or "current" in duration.lower():
+        reasons.append("Current role")
+    elif any(year in duration for year in ["2023", "2024"]):
+        reasons.append("Recent experience")
+    
+    return reasons[:3]
+
+
+def _create_cv_preprocessing_pipeline(cv_text: str, file_format: str = "unknown") -> Dict[str, any]:
+    """Create preprocessing pipeline for different CV formats."""
+    if not cv_text:
+        return {"processed_text": "", "format_info": {}, "preprocessing_steps": []}
+    
+    preprocessing_steps = []
+    processed_text = cv_text
+    format_info = {"detected_format": file_format, "confidence": 0.0}
+    
+    # Step 1: Format detection and normalization
+    if file_format == "unknown":
+        format_info = _detect_cv_format(cv_text)
+        preprocessing_steps.append(f"Format detection: {format_info['detected_format']}")
+    
+    # Step 2: Text cleaning based on format
+    if format_info["detected_format"] == "pdf_with_tables":
+        processed_text = _clean_pdf_table_artifacts(processed_text)
+        preprocessing_steps.append("Cleaned PDF table artifacts")
+    elif format_info["detected_format"] == "docx_formatted":
+        processed_text = _clean_docx_formatting(processed_text)
+        preprocessing_steps.append("Cleaned DOCX formatting")
+    elif format_info["detected_format"] == "plain_text":
+        processed_text = _standardize_plain_text(processed_text)
+        preprocessing_steps.append("Standardized plain text")
+    
+    # Step 3: Universal cleaning
+    processed_text = _universal_cv_cleaning(processed_text)
+    preprocessing_steps.append("Applied universal cleaning")
+    
+    # Step 4: Section standardization
+    processed_text = _standardize_cv_sections(processed_text)
+    preprocessing_steps.append("Standardized section headers")
+    
+    # Step 5: Content validation
+    validation_results = _validate_cv_content_quality(processed_text)
+    preprocessing_steps.append(f"Content validation: {validation_results['quality_score']:.2f}")
+    
+    return {
+        "processed_text": processed_text,
+        "format_info": format_info,
+        "preprocessing_steps": preprocessing_steps,
+        "validation_results": validation_results
+    }
+
+
+def _detect_cv_format(cv_text: str) -> Dict[str, any]:
+    """Detect CV format based on content patterns."""
+    format_indicators = {
+        "pdf_with_tables": {
+            "patterns": [r"\s{3,}\|\s{3,}", r"\n\s*\n\s*\n", r"[A-Z]{2,}\s{5,}[A-Z]{2,}"],
+            "score": 0.0
+        },
+        "docx_formatted": {
+            "patterns": [r"\u2022", r"\u2013", r"\u2014", r"\t+"],
+            "score": 0.0
+        },
+        "linkedin_export": {
+            "patterns": [r"LinkedIn", r"Connections?", r"Profile", r"Experience at"],
+            "score": 0.0
+        },
+        "ats_formatted": {
+            "patterns": [r"^[A-Z\s]+$", r"\n[A-Z][a-z]+:\n", r"Skills?:\s*\n"],
+            "score": 0.0
+        },
+        "plain_text": {
+            "patterns": [r"^[a-zA-Z\s]+$", r"\n\n+"],
+            "score": 0.0
+        }
+    }
+    
+    # Score each format
+    for format_type, info in format_indicators.items():
+        for pattern in info["patterns"]:
+            try:
+                matches = len(re.findall(pattern, cv_text, re.M))
+                info["score"] += matches * 0.1
+            except re.error:
+                continue
+    
+    # Determine best format
+    best_format = max(format_indicators.items(), key=lambda x: x[1]["score"])
+    
+    return {
+        "detected_format": best_format[0],
+        "confidence": min(1.0, best_format[1]["score"]),
+        "all_scores": {k: v["score"] for k, v in format_indicators.items()}
+    }
+
+
+def _clean_pdf_table_artifacts(text: str) -> str:
+    """Clean artifacts from PDF table extraction."""
+    # Remove excessive whitespace from table extraction
+    text = re.sub(r"\s{3,}", " ", text)
+    # Fix broken lines from table cells
+    text = re.sub(r"\n\s*\n\s*\n", "\n\n", text)
+    # Remove table borders
+    text = re.sub(r"[|_-]{3,}", "", text)
+    return text.strip()
+
+
+def _clean_docx_formatting(text: str) -> str:
+    """Clean DOCX formatting artifacts."""
+    # Replace bullet characters
+    text = re.sub(r"[\u2022\u2023\u25E6]", "•", text)
+    # Replace em/en dashes
+    text = re.sub(r"[\u2013\u2014]", "-", text)
+    # Remove excessive tabs
+    text = re.sub(r"\t+", " ", text)
+    return text.strip()
+
+
+def _standardize_plain_text(text: str) -> str:
+    """Standardize plain text CV format."""
+    # Ensure consistent line breaks
+    text = re.sub(r"\r\n", "\n", text)
+    text = re.sub(r"\r", "\n", text)
+    # Remove excessive blank lines
+    text = re.sub(r"\n{3,}", "\n\n", text)
+    return text.strip()
+
+
+def _universal_cv_cleaning(text: str) -> str:
+    """Apply universal cleaning to all CV formats."""
+    # Remove email signatures and footers
+    text = re.sub(r"Sent from my .*", "", text, flags=re.I)
+    text = re.sub(r"This email.*confidential.*", "", text, flags=re.I | re.DOTALL)
+    
+    # Remove page numbers and headers
+    text = re.sub(r"Page \d+ of \d+", "", text, flags=re.I)
+    text = re.sub(r"^\d+\s*$", "", text, flags=re.M)
+    
+    # Standardize phone number formats
+    text = re.sub(r"\(?(\d{3})\)?[-\s]?(\d{3})[-\s]?(\d{4})", r"(\1) \2-\3", text)
+    
+    # Clean up excessive punctuation
+    text = re.sub(r"[.]{3,}", "...", text)
+    text = re.sub(r"[-]{3,}", "---", text)
+    
+    return text.strip()
+
+
+def _standardize_cv_sections(text: str) -> str:
+    """Standardize CV section headers."""
+    section_mappings = {
+        r"(?i)^(work experience|employment history|professional experience|career history)\s*:?\s*$": "EXPERIENCE",
+        r"(?i)^(education|academic background|qualifications)\s*:?\s*$": "EDUCATION",
+        r"(?i)^(skills|technical skills|core competencies|technologies)\s*:?\s*$": "SKILLS",
+        r"(?i)^(achievements|accomplishments|awards)\s*:?\s*$": "ACHIEVEMENTS",
+        r"(?i)^(certifications?|certificates?|licenses?)\s*:?\s*$": "CERTIFICATIONS",
+        r"(?i)^(projects?|portfolio)\s*:?\s*$": "PROJECTS",
+        r"(?i)^(summary|profile|objective|about)\s*:?\s*$": "SUMMARY"
+    }
+    
+    for pattern, replacement in section_mappings.items():
+        try:
+            text = re.sub(pattern, replacement, text, flags=re.M)
+        except re.error:
+            continue
+    
+    return text
+
+
+def _validate_cv_content_quality(text: str) -> Dict[str, any]:
+    """Validate CV content quality after preprocessing."""
+    quality_metrics = {
+        "length_score": 0.0,
+        "structure_score": 0.0,
+        "contact_score": 0.0,
+        "content_score": 0.0,
+        "quality_score": 0.0
+    }
+    
+    if not text:
+        return quality_metrics
+    
+    # Length scoring (optimal: 300-2000 words)
+    word_count = len(text.split())
+    if 300 <= word_count <= 2000:
+        quality_metrics["length_score"] = 1.0
+    elif 200 <= word_count <= 3000:
+        quality_metrics["length_score"] = 0.8
+    else:
+        quality_metrics["length_score"] = 0.5
+    
+    # Structure scoring (presence of key sections)
+    key_sections = ["EXPERIENCE", "EDUCATION", "SKILLS"]
+    found_sections = sum(1 for section in key_sections if section in text.upper())
+    quality_metrics["structure_score"] = found_sections / len(key_sections)
+    
+    # Contact information scoring
+    has_email = bool(re.search(r"\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Z|a-z]{2,}\b", text))
+    has_phone = bool(re.search(r"\(?\d{3}\)?[-\s]?\d{3}[-\s]?\d{4}", text))
+    quality_metrics["contact_score"] = (has_email + has_phone) / 2
+    
+    # Content richness scoring
+    has_quantified_achievements = bool(re.search(r"\d+(?:%|\$|k|million|billion)", text))
+    has_action_verbs = bool(re.search(r"\b(managed|led|developed|created|improved|increased)\b", text, re.I))
+    has_technical_terms = bool(re.search(r"\b(Python|Java|JavaScript|AWS|Docker|SQL)\b", text, re.I))
+    quality_metrics["content_score"] = (has_quantified_achievements + has_action_verbs + has_technical_terms) / 3
+    
+    # Overall quality score
+    quality_metrics["quality_score"] = (
+        quality_metrics["length_score"] * 0.2 +
+        quality_metrics["structure_score"] * 0.3 +
+        quality_metrics["contact_score"] * 0.2 +
+        quality_metrics["content_score"] * 0.3
+    )
+    
+    return quality_metrics
+
+
+def _get_cv_cache_key(cv_text: str) -> str:
+    """Generate cache key for CV content."""
+    return hashlib.md5(cv_text.encode('utf-8')).hexdigest()
+
+
+def _cache_cv_data(cache_key: str, data: Dict) -> None:
+    """Cache extracted CV data with TTL."""
+    with CACHE_LOCK:
+        CV_CACHE[cache_key] = {
+            "data": data,
+            "timestamp": datetime.now(),
+            "ttl": CACHE_TTL
+        }
+        
+        # Clean expired entries
+        current_time = datetime.now()
+        expired_keys = [
+            key for key, value in CV_CACHE.items()
+            if current_time - value["timestamp"] > timedelta(seconds=value["ttl"])
+        ]
+        for key in expired_keys:
+            del CV_CACHE[key]
+
+
+def _get_cached_cv_data(cache_key: str) -> Optional[Dict]:
+    """Retrieve cached CV data if valid."""
+    with CACHE_LOCK:
+        if cache_key in CV_CACHE:
+            cached_entry = CV_CACHE[cache_key]
+            if datetime.now() - cached_entry["timestamp"] <= timedelta(seconds=cached_entry["ttl"]):
+                return cached_entry["data"]
+            else:
+                # Remove expired entry
+                del CV_CACHE[cache_key]
+    return None
+
+
+def extract_cv_content_with_caching(cv_text: str, file_format: str = "unknown") -> Dict[str, any]:
+    """Extract CV content with caching and preprocessing pipeline."""
+    if not cv_text:
+        return {"structured_content": {}, "preprocessing_info": {}, "cached": False}
+    
+    # Check cache first
+    cache_key = _get_cv_cache_key(cv_text)
+    cached_data = _get_cached_cv_data(cache_key)
+    
+    if cached_data:
+        return {**cached_data, "cached": True}
+    
+    # Process CV through pipeline
+    preprocessing_result = _create_cv_preprocessing_pipeline(cv_text, file_format)
+    processed_text = preprocessing_result["processed_text"]
+    
+    # Extract structured content
+    structured_content = _extract_structured_cv_content(processed_text)
+    
+    # Calculate skills-job matching (placeholder - requires job description)
+    # skills_match = _calculate_skills_job_match(structured_content.get("skills", []), "", [])
+    
+    # Score experience relevance (placeholder - requires job description)
+    # scored_experience = _score_experience_relevance(structured_content.get("experience", []), "", [])
+    
+    result = {
+        "structured_content": structured_content,
+        "preprocessing_info": preprocessing_result,
+        "cached": False
+    }
+    
+    # Cache the result
+    _cache_cv_data(cache_key, result)
+    
+    return result
 
 
 def _generate_intelligent_fallback_cover_letter(industry: str, industry_config: Dict, contacts: Dict, company_name: str, key_requirements: List[str], cv_text: str) -> str:
@@ -1133,10 +1950,24 @@ def _build_cover_prompt(jd_text: str, cv_text: str | None) -> str:
         industry = _detect_industry(jd_text)
         industry_config = INDUSTRY_TEMPLATES.get(industry, INDUSTRY_TEMPLATES["general"])
         
-        # Extract key information with error handling
+        # Extract structured CV content with caching and preprocessing
+        cv_extraction_result = extract_cv_content_with_caching(cv_text or "")
+        structured_cv = cv_extraction_result["structured_content"]
         contacts = _extract_contacts(cv_text) if cv_text else {}
         company_name = _extract_company_name(jd_text)
         key_requirements = _extract_key_requirements(jd_text)
+        
+        # Calculate skills-job matching
+        skills_match = _calculate_skills_job_match(structured_cv.get("skills", []), jd_text, key_requirements)
+        
+        # Score experience relevance
+        scored_experience = _score_experience_relevance(structured_cv.get("experience", []), jd_text, key_requirements)
+        
+        # Validate CV content ownership (placeholder for user profile integration)
+        # validation_scores = _validate_cv_content_ownership(contacts, user_profile)
+        
+        # Intelligent CV truncation
+        truncated_cv = _intelligent_cv_truncation(cv_text or "", 3000)
         
         # Select prompt variant
         variant = _select_prompt_variant(industry, "cover_letter")
@@ -1144,9 +1975,11 @@ def _build_cover_prompt(jd_text: str, cv_text: str | None) -> str:
         # Fallback to basic prompt if extraction fails
         industry = "general"
         industry_config = INDUSTRY_TEMPLATES["general"]
+        structured_cv = {}
         contacts = {}
         company_name = ""
         key_requirements = []
+        truncated_cv = cv_text[:3000] if cv_text else ""
         variant = "default"
     
     name = contacts.get("name", "")
@@ -1195,8 +2028,14 @@ def _build_cover_prompt(jd_text: str, cv_text: str | None) -> str:
         f"Contact: {contact_line}\n"
         f"Company: {company_name or 'Not specified'}\n\n"
         "JOB DESCRIPTION:\n" + (jd_text or "")[:2000] + "\n\n"
-        "CANDIDATE CV:\n" + (cv_text or "")[:3000] + "\n\n"
-        f"Generate a {variant.replace('_', ' ')} cover letter that demonstrates clear alignment between the candidate's experience and the role requirements."
+        "STRUCTURED CV DATA:\n"
+        f"Matched Skills ({skills_match['match_score']:.1%}): {', '.join([s.get('name', '') for s in skills_match['matched_skills'][:8]])}\n"
+        f"Top Experience: {'; '.join([f"{exp.get('title', '')} at {exp.get('company', '')} (relevance: {exp.get('relevance_score', 0):.1f})" for exp in scored_experience[:3]])}\n"
+        f"Education: {'; '.join([f"{ed.get('degree', '')} from {ed.get('institution', '')}" for ed in structured_cv.get('education', [])][:2])}\n"
+        f"Key Achievements: {'; '.join([ach.get('text', '')[:80] for ach in structured_cv.get('achievements', [])][:3])}\n"
+        f"Skill Gaps: {'; '.join([gap.get('missing_skill', '') for gap in skills_match.get('skill_gaps', [])][:3])}\n\n"
+        "FULL CV CONTENT:\n" + truncated_cv + "\n\n"
+        f"Generate a {variant.replace('_', ' ')} cover letter using structured data and achievements."
     )
 
 
@@ -1206,9 +2045,23 @@ def _build_cv_prompt(jd_text: str, cv_text: str | None, template: str = "classic
         industry = _detect_industry(jd_text)
         industry_config = INDUSTRY_TEMPLATES.get(industry, INDUSTRY_TEMPLATES["general"])
         
-        # Extract key information with error handling
+        # Extract structured CV content with caching and preprocessing
+        cv_extraction_result = extract_cv_content_with_caching(cv_text or "")
+        structured_cv = cv_extraction_result["structured_content"]
         contacts = _extract_contacts(cv_text) if cv_text else {}
         key_requirements = _extract_key_requirements(jd_text)
+        
+        # Calculate skills-job matching
+        skills_match = _calculate_skills_job_match(structured_cv.get("skills", []), jd_text, key_requirements)
+        
+        # Score experience relevance
+        scored_experience = _score_experience_relevance(structured_cv.get("experience", []), jd_text, key_requirements)
+        
+        # Validate CV content ownership (placeholder for user profile integration)
+        # validation_scores = _validate_cv_content_ownership(contacts, user_profile)
+        
+        # Intelligent CV truncation
+        truncated_cv = _intelligent_cv_truncation(cv_text or "", 4000)
         
         # Select prompt variant
         variant = _select_prompt_variant(industry, "cv")
@@ -1216,8 +2069,10 @@ def _build_cv_prompt(jd_text: str, cv_text: str | None, template: str = "classic
         # Fallback to basic prompt if extraction fails
         industry = "general"
         industry_config = INDUSTRY_TEMPLATES["general"]
+        structured_cv = {}
         contacts = {}
         key_requirements = []
+        truncated_cv = cv_text[:4000] if cv_text else ""
         variant = "default"
     
     name = contacts.get("name", "")
@@ -1285,8 +2140,14 @@ def _build_cv_prompt(jd_text: str, cv_text: str | None, template: str = "classic
         f"Name: {name}\n"
         f"Contact: {profile}\n\n"
         "TARGET JOB DESCRIPTION:\n" + (jd_text or "")[:2000] + "\n\n"
-        "SOURCE CV CONTENT:\n" + (cv_text or "")[:4000] + "\n\n"
-        f"Generate a {variant.replace('_', ' ')} CV that maximizes ATS compatibility while showcasing the candidate's strongest qualifications for this specific role."
+        "STRUCTURED CV DATA:\n"
+        f"Matched Skills ({skills_match['match_score']:.1%}): {', '.join([s.get('name', '') for s in skills_match['matched_skills'][:12]])}\n"
+        f"Relevant Experience: {'; '.join([f"{exp.get('title', '')} at {exp.get('company', '')} ({exp.get('duration', '')}) - {exp.get('relevance_score', 0):.1f}" for exp in scored_experience[:4]])}\n"
+        f"Education: {'; '.join([f"{ed.get('degree', '')} from {ed.get('institution', '')} ({ed.get('year', '')})" for ed in structured_cv.get('education', [])][:3])}\n"
+        f"Key Achievements: {'; '.join([ach.get('text', '')[:100] for ach in structured_cv.get('achievements', [])][:5])}\n"
+        f"Missing Skills: {'; '.join([gap.get('missing_skill', '') for gap in skills_match.get('skill_gaps', [])][:4])}\n\n"
+        "SOURCE CV CONTENT:\n" + truncated_cv + "\n\n"
+        f"Generate a {variant.replace('_', ' ')} CV using structured data for maximum ATS compatibility and relevance."
     )
 
 
