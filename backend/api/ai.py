@@ -12,6 +12,14 @@ from functools import lru_cache
 from dataclasses import dataclass
 import pickle
 import logging
+import random
+import math
+
+# HTTP client (optional for external provider calls)
+try:
+    import requests  # type: ignore
+except ImportError:
+    requests = None  # Fallback used by provider functions to detect absence
 
 # ML Quality Prediction
 try:
@@ -25,6 +33,13 @@ try:
 except ImportError as e:
     logging.warning(f"ML quality prediction disabled: {e}")
     ML_QUALITY_ENABLED = False
+
+# Automatic ML retraining
+try:
+    from .auto_training import start_auto_training_if_enabled
+    start_auto_training_if_enabled()
+except ImportError as e:
+    logging.warning(f"ML auto-training unavailable: {e}")
 
 # A/B Testing Framework
 try:
@@ -109,6 +124,12 @@ QUALITY_WEIGHTS = {
     "length": 0.10
 }
 
+# Adaptive prompt selection config
+PROMPT_ADAPTIVE_ENABLED = os.environ.get("PROMPT_ADAPTIVE_ENABLED", "true").strip().lower() in {"1", "true", "yes", "on"}
+PROMPT_EPSILON = float(os.environ.get("PROMPT_EPSILON", "0.1"))  # exploration rate
+PROMPT_UCB_C = float(os.environ.get("PROMPT_UCB_C", "0.3"))      # UCB exploration weight
+PROMPT_EMA_ALPHA = float(os.environ.get("PROMPT_EMA_ALPHA", "0.2"))  # EMA smoothing
+
 # A/B testing prompt variations
 PROMPT_VARIANTS = {
     "cover_letter": {
@@ -165,6 +186,58 @@ INDUSTRY_TEMPLATES = {
     }
 }
 
+
+# ----- Adaptive Prompt Variant Persistence -----
+PROMPT_STATS_LOCK = threading.Lock()
+_PROMPT_STATS_CACHE: Dict[str, Dict] = {}
+
+def _prompt_stats_path() -> str:
+    return os.path.join(os.path.dirname(__file__), "prompt_stats.json")
+
+def _load_prompt_stats() -> Dict[str, Dict]:
+    global _PROMPT_STATS_CACHE
+    with PROMPT_STATS_LOCK:
+        if _PROMPT_STATS_CACHE:
+            return _PROMPT_STATS_CACHE
+        path = _prompt_stats_path()
+        try:
+            if os.path.exists(path):
+                with open(path, "r", encoding="utf-8") as f:
+                    _PROMPT_STATS_CACHE = json.load(f)
+            else:
+                _PROMPT_STATS_CACHE = {}
+        except Exception as e:
+            logging.warning(f"Failed to load prompt stats: {e}")
+            _PROMPT_STATS_CACHE = {}
+        return _PROMPT_STATS_CACHE
+
+def _save_prompt_stats(stats: Dict[str, Dict]) -> None:
+    with PROMPT_STATS_LOCK:
+        try:
+            with open(_prompt_stats_path(), "w", encoding="utf-8") as f:
+                json.dump(stats, f)
+        except Exception as e:
+            logging.warning(f"Failed to save prompt stats: {e}")
+
+def _get_variant_stats(stats: Dict[str, Dict], content_type: str, industry: str) -> Dict[str, Dict]:
+    return stats.setdefault(content_type, {}).setdefault(industry, {})
+
+def _update_prompt_variant_stats(industry: str, content_type: str, variant: str, quality: float, success: bool = True) -> None:
+    if not PROMPT_ADAPTIVE_ENABLED or not variant:
+        return
+    stats = _load_prompt_stats()
+    bucket = _get_variant_stats(stats, content_type, industry)
+    now_iso = datetime.utcnow().isoformat()
+    v = bucket.setdefault(variant, {"count": 0, "ema_quality": 0.6, "last_updated": now_iso, "successes": 0})
+    # Update EMA and counts
+    old_ema = v.get("ema_quality", 0.6)
+    new_ema = (1 - PROMPT_EMA_ALPHA) * old_ema + PROMPT_EMA_ALPHA * float(max(0.0, min(1.0, quality)))
+    v["ema_quality"] = new_ema
+    v["count"] = int(v.get("count", 0)) + 1
+    if success:
+        v["successes"] = int(v.get("successes", 0)) + 1
+    v["last_updated"] = now_iso
+    _save_prompt_stats(stats)
 
 def _bool_env(name: str, default: bool) -> bool:
     v = os.environ.get(name)
@@ -713,24 +786,49 @@ def _calculate_content_quality_score(content: str, jd_text: str, industry: str, 
 
 
 def _select_prompt_variant(industry: str, content_type: str, user_preferences: Dict = None) -> str:
-    """Select optimal prompt variant based on industry and A/B testing results."""
-    # Simple A/B testing logic - in production, this would use historical performance data
-    variants = PROMPT_VARIANTS.get(content_type, {})
-    
-    if not variants:
+    """Adaptive selection of prompt variant per industry/content_type using lightweight bandit.
+
+    Strategy: epsilon-greedy with UCB tie-breaker on EMA quality and counts.
+    """
+    variants_map = PROMPT_VARIANTS.get(content_type, {})
+    if not variants_map:
         return "standard"
-    
-    # Industry-specific variant selection
-    if industry == "tech":
-        return "achievement_focused" if content_type == "cover_letter" else "skills_first"
-    elif industry == "finance":
-        return "problem_solution" if content_type == "cover_letter" else "impact_focused"
-    elif industry == "sales":
-        return "story_driven" if content_type == "cover_letter" else "impact_focused"
-    elif industry == "healthcare":
-        return "achievement_focused" if content_type == "cover_letter" else "hybrid"
-    else:
+
+    variants = list(variants_map.keys())
+    if not PROMPT_ADAPTIVE_ENABLED:
+        # Fallback to static heuristic by industry
+        if industry == "tech":
+            return "achievement_focused" if content_type == "cover_letter" else "skills_first"
+        if industry == "finance":
+            return "problem_solution" if content_type == "cover_letter" else "impact_focused"
+        if industry == "sales":
+            return "story_driven" if content_type == "cover_letter" else "impact_focused"
+        if industry == "healthcare":
+            return "achievement_focused" if content_type == "cover_letter" else "hybrid"
         return "standard"
+
+    stats = _load_prompt_stats()
+    bucket = _get_variant_stats(stats, content_type, industry)
+
+    # Exploration
+    if random.random() < PROMPT_EPSILON:
+        return random.choice(variants)
+
+    # Exploitation with UCB
+    total = sum(int(v.get("count", 0)) for v in bucket.values())
+    best_variant = None
+    best_score = -1e9
+    for v in variants:
+        rec = bucket.get(v, {})
+        count = int(rec.get("count", 0))
+        ema = float(rec.get("ema_quality", 0.6))
+        # UCB bonus prefers less tried variants
+        bonus = PROMPT_UCB_C * math.sqrt(math.log(total + 1.0) / (count + 1.0)) if total >= 0 else 0.0
+        score = ema + bonus
+        if score > best_score:
+            best_score = score
+            best_variant = v
+    return best_variant or "standard"
 
 
 def _score_name_candidate(name: str, context_lines: List[str]) -> float:
@@ -1060,7 +1158,7 @@ def _extract_structured_cv_content(cv_text: str) -> Dict[str, any]:
         
         for section_name, pattern in section_patterns.items():
             try:
-                if re.search(f"^{pattern}\s*:?\s*$", line_lower):
+                if re.search(rf"^{pattern}\s*:?\s*$", line_lower):
                     detected_section = section_name
                     break
             except re.error:
@@ -1989,8 +2087,11 @@ ADDITIONAL SKILLS
 {' • '.join(industry_config.get('keywords', [])[-5:])}"""
 
 
-def _build_cover_prompt(jd_text: str, cv_text: str | None) -> str:
-    """Build cover letter prompt with industry-specific templates and dynamic formatting."""
+def _build_cover_prompt(jd_text: str, cv_text: str | None, variant: Optional[str] = None) -> Tuple[str, str]:
+    """Build cover letter prompt with industry-specific templates and dynamic formatting.
+
+    Returns (prompt_text, variant_used).
+    """
     try:
         industry = _detect_industry(jd_text)
         industry_config = INDUSTRY_TEMPLATES.get(industry, INDUSTRY_TEMPLATES["general"])
@@ -2014,8 +2115,8 @@ def _build_cover_prompt(jd_text: str, cv_text: str | None) -> str:
         # Intelligent CV truncation
         truncated_cv = _intelligent_cv_truncation(cv_text or "", 3000)
         
-        # Select prompt variant
-        variant = _select_prompt_variant(industry, "cover_letter")
+        # Select prompt variant (adaptive) unless provided
+        variant = variant or _select_prompt_variant(industry, "cover_letter")
     except Exception:
         # Fallback to basic prompt if extraction fails
         industry = "general"
@@ -2052,7 +2153,27 @@ def _build_cover_prompt(jd_text: str, cv_text: str | None) -> str:
         "problem_solution": "Address specific challenges mentioned in the JD and present solutions from your experience"
     }
     
-    return (
+    # Precompute strings to avoid nested f-strings in f-string expressions
+    top_experience_str = '; '.join([
+        f"{exp.get('title', '')} at {exp.get('company', '')} (relevance: {exp.get('relevance_score', 0):.1f})"
+        for exp in (scored_experience[:3] if 'scored_experience' in locals() else [])
+    ])
+    education_str = '; '.join([
+        f"{ed.get('degree', '')} from {ed.get('institution', '')}"
+        for ed in (structured_cv.get('education', [])[:2] if 'structured_cv' in locals() else [])
+    ])
+    achievements_str = '; '.join([
+        ach.get('text', '')[:80]
+        for ach in (structured_cv.get('achievements', [])[:3] if 'structured_cv' in locals() else [])
+    ])
+    matched_skills_str = ''
+    skill_gaps_str = ''
+    if 'skills_match' in locals() and isinstance(skills_match, dict):
+        matched_list = [s.get('name', '') for s in skills_match.get('matched_skills', [])[:8]]
+        matched_skills_str = f"Matched Skills ({skills_match.get('match_score', 0):.1%}): {', '.join(matched_list)}"
+        skill_gaps_str = "; ".join([gap.get('missing_skill', '') for gap in skills_match.get('skill_gaps', [])[:3]])
+    
+    prompt_text = (
         f"ROLE: Expert {industry} career writer crafting ATS-optimized cover letters.\n"
         f"OBJECTIVE: {PROMPT_VARIANTS['cover_letter'].get(variant, PROMPT_VARIANTS['cover_letter']['standard'])} using ONLY verified facts from the CV and JD.\n"
         f"VARIANT STRATEGY: {variant_instructions.get(variant, variant_instructions['standard'])}\n\n"
@@ -2074,18 +2195,22 @@ def _build_cover_prompt(jd_text: str, cv_text: str | None) -> str:
         f"Company: {company_name or 'Not specified'}\n\n"
         "JOB DESCRIPTION:\n" + (jd_text or "")[:2000] + "\n\n"
         "STRUCTURED CV DATA:\n"
-        f"Matched Skills ({skills_match['match_score']:.1%}): {', '.join([s.get('name', '') for s in skills_match['matched_skills'][:8]])}\n"
-        f"Top Experience: {'; '.join([f"{exp.get('title', '')} at {exp.get('company', '')} (relevance: {exp.get('relevance_score', 0):.1f})" for exp in scored_experience[:3]])}\n"
-        f"Education: {'; '.join([f"{ed.get('degree', '')} from {ed.get('institution', '')}" for ed in structured_cv.get('education', [])][:2])}\n"
-        f"Key Achievements: {'; '.join([ach.get('text', '')[:80] for ach in structured_cv.get('achievements', [])][:3])}\n"
-        f"Skill Gaps: {'; '.join([gap.get('missing_skill', '') for gap in skills_match.get('skill_gaps', [])][:3])}\n\n"
+        f"{matched_skills_str}\n"
+        f"Top Experience: {top_experience_str}\n"
+        f"Education: {education_str}\n"
+        f"Key Achievements: {achievements_str}\n"
+        f"Skill Gaps: {skill_gaps_str}\n\n"
         "FULL CV CONTENT:\n" + truncated_cv + "\n\n"
         f"Generate a {variant.replace('_', ' ')} cover letter using structured data and achievements."
     )
+    return prompt_text, variant
 
 
-def _build_cv_prompt(jd_text: str, cv_text: str | None, template: str = "classic") -> str:
-    """Build CV prompt with industry-specific templates and dynamic formatting."""
+def _build_cv_prompt(jd_text: str, cv_text: str | None, template: str = "classic", variant: Optional[str] = None) -> Tuple[str, str]:
+    """Build CV prompt with industry-specific templates and dynamic formatting.
+
+    Returns (prompt_text, variant_used).
+    """
     try:
         industry = _detect_industry(jd_text)
         industry_config = INDUSTRY_TEMPLATES.get(industry, INDUSTRY_TEMPLATES["general"])
@@ -2108,8 +2233,8 @@ def _build_cv_prompt(jd_text: str, cv_text: str | None, template: str = "classic
         # Intelligent CV truncation
         truncated_cv = _intelligent_cv_truncation(cv_text or "", 4000)
         
-        # Select prompt variant
-        variant = _select_prompt_variant(industry, "cv")
+        # Select prompt variant (adaptive) unless provided
+        variant = variant or _select_prompt_variant(industry, "cv")
     except Exception:
         # Fallback to basic prompt if extraction fails
         industry = "general"
@@ -2153,7 +2278,27 @@ def _build_cv_prompt(jd_text: str, cv_text: str | None, template: str = "classic
         "hybrid": "Balance chronological experience with prominent skills and achievements sections"
     }
     
-    return (
+    # Precompute strings to avoid nested f-strings in f-string expressions
+    relevant_experience_str = '; '.join([
+        f"{exp.get('title', '')} at {exp.get('company', '')} ({exp.get('duration', '')}) - {exp.get('relevance_score', 0):.1f}"
+        for exp in (scored_experience[:4] if 'scored_experience' in locals() else [])
+    ])
+    education_cv_str = '; '.join([
+        f"{ed.get('degree', '')} from {ed.get('institution', '')} ({ed.get('year', '')})"
+        for ed in (structured_cv.get('education', [])[:3] if 'structured_cv' in locals() else [])
+    ])
+    matched_skills_cv_str = ''
+    missing_skills_cv_str = ''
+    if 'skills_match' in locals() and isinstance(skills_match, dict):
+        matched_list = [s.get('name', '') for s in skills_match.get('matched_skills', [])[:12]]
+        matched_skills_cv_str = f"Matched Skills ({skills_match.get('match_score', 0):.1%}): {', '.join(matched_list)}"
+        missing_skills_cv_str = "; ".join([gap.get('missing_skill', '') for gap in skills_match.get('skill_gaps', [])[:4]])
+    achievements_cv_str = '; '.join([
+        ach.get('text', '')[:100]
+        for ach in (structured_cv.get('achievements', [])[:5] if 'structured_cv' in locals() else [])
+    ])
+    
+    prompt_text = (
         f"ROLE: Senior {industry} resume writer specializing in ATS optimization.\n"
         f"OBJECTIVE: {PROMPT_VARIANTS['cv'].get(variant, PROMPT_VARIANTS['cv']['standard'])} optimized for {industry} roles using ONLY verified CV facts.\n"
         f"VARIANT STRATEGY: {variant_instructions.get(variant, variant_instructions['standard'])}\n\n"
@@ -2186,14 +2331,15 @@ def _build_cv_prompt(jd_text: str, cv_text: str | None, template: str = "classic
         f"Contact: {profile}\n\n"
         "TARGET JOB DESCRIPTION:\n" + (jd_text or "")[:2000] + "\n\n"
         "STRUCTURED CV DATA:\n"
-        f"Matched Skills ({skills_match['match_score']:.1%}): {', '.join([s.get('name', '') for s in skills_match['matched_skills'][:12]])}\n"
-        f"Relevant Experience: {'; '.join([f"{exp.get('title', '')} at {exp.get('company', '')} ({exp.get('duration', '')}) - {exp.get('relevance_score', 0):.1f}" for exp in scored_experience[:4]])}\n"
-        f"Education: {'; '.join([f"{ed.get('degree', '')} from {ed.get('institution', '')} ({ed.get('year', '')})" for ed in structured_cv.get('education', [])][:3])}\n"
-        f"Key Achievements: {'; '.join([ach.get('text', '')[:100] for ach in structured_cv.get('achievements', [])][:5])}\n"
-        f"Missing Skills: {'; '.join([gap.get('missing_skill', '') for gap in skills_match.get('skill_gaps', [])][:4])}\n\n"
+        f"{matched_skills_cv_str}\n"
+        f"Relevant Experience: {relevant_experience_str}\n"
+        f"Education: {education_cv_str}\n"
+        f"Key Achievements: {achievements_cv_str}\n"
+        f"Missing Skills: {missing_skills_cv_str}\n\n"
         "SOURCE CV CONTENT:\n" + truncated_cv + "\n\n"
         f"Generate a {variant.replace('_', ' ')} CV using structured data for maximum ATS compatibility and relevance."
     )
+    return prompt_text, variant
 
 
 def generate_cover_letter(jd_text: str, cv_text: str | None = None, user_id: str = "anonymous") -> Tuple[str, str, List[Dict]]:
@@ -2205,21 +2351,22 @@ def generate_cover_letter(jd_text: str, cv_text: str | None = None, user_id: str
     ai_dry_run = _bool_env("AI_DRY_RUN", True)
     trace: List[Dict] = []
     
-    # A/B Testing: Assign variant
+    # A/B Testing: Assign variant bucket (for trace only)
     generation_variant = "control"
     if AB_TESTING_ENABLED:
         generation_variant = assign_generation_variant(user_id, "cover_letter")
         trace.append({"ab_test_variant": generation_variant})
     
-    # Build prompt for caching (variant-aware)
-    prompt = _build_cover_prompt(jd_text or "", cv_text or "", variant=generation_variant)
+    # Build prompt and select adaptive variant for caching
+    prompt, variant_used = _build_cover_prompt(jd_text or "", cv_text or "")
+    trace.append({"prompt_variant": variant_used})
     
     # Semantic Caching: Check for similar cached responses
     if SEMANTIC_CACHE_ENABLED:
         cached_response = get_semantic_cached_response(
             prompt, 
             "cover_letter", 
-            {"variant": generation_variant, "industry": _detect_industry(jd_text)}
+            {"variant": variant_used, "industry": _detect_industry(jd_text)}
         )
         if cached_response:
             trace.append({"provider": "semantic_cache", "status": "hit", "duration_ms": 0})
@@ -2239,7 +2386,7 @@ def generate_cover_letter(jd_text: str, cv_text: str | None = None, user_id: str
                 cv_text=cv_text or "",
                 industry=_detect_industry(jd_text),
                 template="standard",
-                variant=generation_variant,
+                variant=variant_used,
                 provider="predicted",
                 skills_match=skills_match,
                 experience_scores=scored_experience
@@ -2253,6 +2400,8 @@ def generate_cover_letter(jd_text: str, cv_text: str | None = None, user_id: str
         industry = _detect_industry(jd_text)
         industry_config = INDUSTRY_TEMPLATES.get(industry, INDUSTRY_TEMPLATES["general"])
         contacts = _extract_contacts(cv_text)
+        # Track which variant would be used (for trace only)
+        variant_used = _select_prompt_variant(industry, "cover_letter")
         
         content = (
             f"Cover Letter — {industry.title()} Industry Focus\n\n"
@@ -2272,6 +2421,7 @@ def generate_cover_letter(jd_text: str, cv_text: str | None = None, user_id: str
             f"JD Excerpt: {(jd_text or '').strip()[:300]}...\n"
         )
         trace.append({"provider": "mock", "status": "dry_run", "duration_ms": 0, "industry": industry})
+        trace.append({"prompt_variant": variant_used})
         return "mock", content, trace
     
     # Check cache first
@@ -2310,7 +2460,20 @@ def generate_cover_letter(jd_text: str, cv_text: str | None = None, user_id: str
             _cache_response(cache_key, out)
             
             # Calculate quality score for generated content
-            quality_scores = _calculate_content_quality_score(out, jd_text, _detect_industry(jd_text), "cover_letter")
+            industry = _detect_industry(jd_text)
+            quality_scores = _calculate_content_quality_score(out, jd_text, industry, "cover_letter")
+            # Write to semantic cache
+            if SEMANTIC_CACHE_ENABLED:
+                try:
+                    cache_semantic_response(
+                        prompt,
+                        out,
+                        "cover_letter",
+                        quality_scores.get("overall", 0.0),
+                        {"variant": variant_used, "industry": industry}
+                    )
+                except Exception as e:
+                    logging.warning(f"Semantic cache write failed (cover_letter): {e}")
             
             # ML Quality Prediction and Feedback Collection
             ml_prediction = None
@@ -2326,9 +2489,9 @@ def generate_cover_letter(jd_text: str, cv_text: str | None = None, user_id: str
                         jd_text=jd_text,
                         cv_text=cv_text or "",
                         generated_content=out,
-                        industry=_detect_industry(jd_text),
+                        industry=industry,
                         template="standard",
-                        variant="standard",
+                        variant=variant_used,
                         provider=provider,
                         generation_time_ms=dt,
                         skills_match=skills_match,
@@ -2349,6 +2512,8 @@ def generate_cover_letter(jd_text: str, cv_text: str | None = None, user_id: str
                 "quality_breakdown": quality_scores,
                 "ml_prediction": ml_prediction
             })
+            # Update adaptive prompt stats
+            _update_prompt_variant_stats(industry, "cover_letter", variant_used, quality_scores.get("overall", 0.0), success=True)
             return provider, out, trace
             
         except Exception as e:
@@ -2378,6 +2543,18 @@ def generate_cover_letter(jd_text: str, cv_text: str | None = None, user_id: str
         
         # Calculate quality score for fallback content
         quality_scores = _calculate_content_quality_score(fallback_content, jd_text, industry, "cover_letter")
+        # Write to semantic cache
+        if SEMANTIC_CACHE_ENABLED:
+            try:
+                cache_semantic_response(
+                    prompt,
+                    fallback_content,
+                    "cover_letter",
+                    quality_scores.get("overall", 0.0),
+                    {"variant": variant_used, "industry": industry, "provider": "intelligent_fallback"}
+                )
+            except Exception as e:
+                logging.warning(f"Semantic cache write failed (cover_letter_fallback): {e}")
         
         trace.append({
             "provider": "intelligent_fallback", 
@@ -2399,12 +2576,48 @@ def generate_cv(jd_text: str, cv_text: str | None = None, template: str = "class
     Returns (provider_used, content, trace) for a generated CV.
     - Enhanced with caching, retry logic, and provider health tracking
     - Uses AI_DRY_RUN=true (default) to return deterministic content without external calls.
+    - Adaptive prompt variant selection integrated with semantic cache and ML feedback.
     """
     ai_dry_run = _bool_env("AI_DRY_RUN", True)
     trace: List[Dict] = []
     
-    # Build prompt for caching
-    prompt = _build_cv_prompt(jd_text or "", cv_text or "", template)
+    # Build prompt and select adaptive variant for caching/semcache
+    prompt, variant_used = _build_cv_prompt(jd_text or "", cv_text or "", template)
+    trace.append({"prompt_variant": variant_used})
+    
+    # Semantic Caching: Check for similar cached responses
+    if SEMANTIC_CACHE_ENABLED:
+        cached_response = get_semantic_cached_response(
+            prompt,
+            "cv",
+            {"variant": variant_used, "industry": _detect_industry(jd_text), "template": template}
+        )
+        if cached_response:
+            trace.append({"provider": "semantic_cache", "status": "hit", "duration_ms": 0, "template": template})
+            return "semantic_cache", cached_response, trace
+    
+    # ML Quality Prediction: Predict quality before generation (for monitoring)
+    ml_prediction = None
+    if ML_QUALITY_ENABLED:
+        try:
+            cv_extraction_result = extract_cv_content_with_caching(cv_text or "")
+            structured_cv = cv_extraction_result["structured_content"]
+            skills_match = _calculate_skills_job_match(structured_cv.get("skills", []), jd_text, _extract_key_requirements(jd_text))
+            scored_experience = _score_experience_relevance(structured_cv.get("experience", []), jd_text, _extract_key_requirements(jd_text))
+            
+            ml_prediction = predict_generation_quality(
+                jd_text=jd_text,
+                cv_text=cv_text or "",
+                industry=_detect_industry(jd_text),
+                template=template,
+                variant=variant_used,
+                provider="predicted",
+                skills_match=skills_match,
+                experience_scores=scored_experience
+            )
+            trace.append({"ml_prediction": ml_prediction})
+        except Exception as e:
+            logging.warning(f"ML quality prediction (cv) failed: {e}")
     
     if ai_dry_run:
         # Enhanced mock response with industry and template awareness
@@ -2445,6 +2658,7 @@ def generate_cv(jd_text: str, cv_text: str | None = None, template: str = "class
             f"JD Keywords Detected: {', '.join(industry_config['keywords'][:5])}\n"
         )
         trace.append({"provider": "mock", "status": "dry_run", "duration_ms": 0, "template": template, "industry": industry})
+        trace.append({"prompt_variant": variant_used})
         return "mock", content, trace
     
     # Check cache first
@@ -2483,7 +2697,44 @@ def generate_cv(jd_text: str, cv_text: str | None = None, template: str = "class
             _cache_response(cache_key, out)
             
             # Calculate quality score for generated content
-            quality_scores = _calculate_content_quality_score(out, jd_text, _detect_industry(jd_text), "cv")
+            industry = _detect_industry(jd_text)
+            quality_scores = _calculate_content_quality_score(out, jd_text, industry, "cv")
+            # Write to semantic cache
+            if SEMANTIC_CACHE_ENABLED:
+                try:
+                    cache_semantic_response(
+                        prompt,
+                        out,
+                        "cv",
+                        quality_scores.get("overall", 0.0),
+                        {"variant": variant_used, "industry": industry, "template": template}
+                    )
+                except Exception as e:
+                    logging.warning(f"Semantic cache write failed (cv): {e}")
+            
+            # ML Quality Feedback Collection
+            if ML_QUALITY_ENABLED:
+                try:
+                    cv_extraction_result = extract_cv_content_with_caching(cv_text or "")
+                    structured_cv = cv_extraction_result["structured_content"]
+                    skills_match = _calculate_skills_job_match(structured_cv.get("skills", []), jd_text, _extract_key_requirements(jd_text))
+                    scored_experience = _score_experience_relevance(structured_cv.get("experience", []), jd_text, _extract_key_requirements(jd_text))
+                    
+                    features = feature_extractor.extract_features(
+                        jd_text=jd_text,
+                        cv_text=cv_text or "",
+                        generated_content=out,
+                        industry=industry,
+                        template=template,
+                        variant=variant_used,
+                        provider=provider,
+                        generation_time_ms=dt,
+                        skills_match=skills_match,
+                        experience_scores=scored_experience
+                    )
+                    collect_quality_feedback(features, out, quality_scores)
+                except Exception as e:
+                    logging.warning(f"ML quality feedback collection (cv) failed: {e}")
             
             trace.append({
                 "provider": provider, 
@@ -2493,6 +2744,8 @@ def generate_cv(jd_text: str, cv_text: str | None = None, template: str = "class
                 "quality_score": quality_scores["overall"],
                 "quality_breakdown": quality_scores
             })
+            # Update adaptive prompt stats for CV
+            _update_prompt_variant_stats(industry, "cv", variant_used, quality_scores.get("overall", 0.0), success=True)
             return provider, out, trace
             
         except Exception as e:
@@ -2538,6 +2791,20 @@ def generate_cv(jd_text: str, cv_text: str | None = None, template: str = "class
         f"CERTIFICATIONS\n"
         f"Relevant {industry.title()} certifications and professional development\n"
     )
+    # Calculate quality score and write to semantic cache for fallback
+    try:
+        quality_scores = _calculate_content_quality_score(content, jd_text, industry, "cv")
+        if SEMANTIC_CACHE_ENABLED:
+            cache_semantic_response(
+                prompt,
+                content,
+                "cv",
+                quality_scores.get("overall", 0.0),
+                {"variant": variant_used, "industry": industry, "template": template, "provider": "fallback"}
+            )
+    except Exception as e:
+        logging.warning(f"Semantic cache write failed (cv_fallback): {e}")
     
     trace.append({"provider": "fallback", "status": "generated", "duration_ms": 0, "template": template, "industry": industry})
     return "fallback", content, trace
+    

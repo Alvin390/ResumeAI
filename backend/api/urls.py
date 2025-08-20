@@ -1,7 +1,7 @@
 from django.urls import path
 from .views import (
-    HealthCheckView, ProfileView, UserUpdateView, 
-    CVUploadView, CVListView, GenerateView, DocumentDownloadView,
+    health, ProfileView, UserUpdateView, 
+    DocumentListCreateView, DocumentDownloadView,
     DocumentDetailView,
     DocumentSaveView,
     ProfilePhotoView,

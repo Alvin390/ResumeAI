@@ -192,13 +192,53 @@ export default function Login() {
           </div>
           <div className="divider" style={{ marginTop: 16, marginBottom: 8 }}>or continue with</div>
           <div className="grid-2-equal">
-            <a className="btn btn-google" href={`${serverOrigin}/accounts/google/login/`} rel="noopener noreferrer">
+            <a
+              className="btn btn-google"
+              href={`${serverOrigin}/accounts/google/login/`}
+              rel="noopener noreferrer"
+              onClick={(e) => {
+                try {
+                  e.preventDefault()
+                  const w = window.open(
+                    `${serverOrigin}/accounts/google/login/`,
+                    'oauth',
+                    'width=520,height=640,menubar=no,toolbar=no,location=no,status=no,resizable=yes,scrollbars=yes'
+                  )
+                  if (w) {
+                    try { window._oauthPopup = w } catch {}
+                    w.focus()
+                  }
+                } catch (_) {
+                  // fallback: allow navigation
+                }
+              }}
+            >
               <svg className="icon" viewBox="0 0 24 24" aria-hidden="true">
                 <path d="M20.4 11.8c.1-.5.1-1 0-1.5H12v3.7h5.2c-.2 1.3-1.6 3.8-5.2 3.8-3.1 0-5.6-2.6-5.6-5.7S8.9 6.3 12 6.3c1.8 0 3 .8 3.7 1.5l2.5-2.4C16.8 3.9 14.6 3 12 3 7.5 3 3.8 6.6 3.8 11.1S7.5 19.2 12 19.2c6.9 0 7.9-4.9 7.4-7.4z" fill="#EA4335"/><path d="M12 3c-3.3 0-6.1 1.8-7.7 4.1l3 2.2C8.5 8 10.5 6.3 12 6.3c1.8 0 3 .8 3.7 1.5l2.5-2.4C16.8 3.9 14.6 3 12 3z" fill="#34A853"/><path d="M12 21c3.5 0 6.6-1.8 8.4-4.5l-3-2.3c-.9 1.9-2.9 3.2-5.2 3.2-3.6 0-5-2.5-5.2-3.8H3.8c.5 2.5 1.5 7.4 7.4 7.4.1 0 .1 0 .2 0z" fill="#4285F4"/><path d="M12 13.9c-3.6 0-5-2.5-5.2-3.8H3.8c.5 2.5 1.5 7.4 7.4 7.4.1 0 .1 0 .2 0 3.5 0 6.6-1.8 8.4-4.5l-3-2.3c-.9 1.9-2.9 3.2-5.2 3.2z" fill="#FBBC05"/>
               </svg>
               Continue with Google
             </a>
-            <a className="btn btn-linkedin" href={`${serverOrigin}/accounts/linkedin_oauth2/login/`} rel="noopener noreferrer">
+            <a
+              className="btn btn-linkedin"
+              href={`${serverOrigin}/accounts/linkedin_oauth2/login/`}
+              rel="noopener noreferrer"
+              onClick={(e) => {
+                try {
+                  e.preventDefault()
+                  const w = window.open(
+                    `${serverOrigin}/accounts/linkedin_oauth2/login/`,
+                    'oauth',
+                    'width=520,height=640,menubar=no,toolbar=no,location=no,status=no,resizable=yes,scrollbars=yes'
+                  )
+                  if (w) {
+                    try { window._oauthPopup = w } catch {}
+                    w.focus()
+                  }
+                } catch (_) {
+                  // fallback: allow navigation
+                }
+              }}
+            >
               <svg className="icon" viewBox="0 0 24 24" aria-hidden="true">
                 <path d="M20 2H4a2 2 0 00-2 2v16a2 2 0 002 2h16a2 2 0 002-2V4a2 2 0 00-2-2zM8 18H5V8h3v10zM6.5 6.5A1.5 1.5 0 118 5a1.5 1.5 0 01-1.5 1.5zM18 18h-3v-5.09c0-1.1-.79-2.01-1.75-2.01S11.5 11.8 11.5 13v5h-3V8h3v1.32c.6-.94 1.66-1.57 2.75-1.57C16.88 7.75 18 9.12 18 11.41V18z" fill="currentColor"/>
               </svg>

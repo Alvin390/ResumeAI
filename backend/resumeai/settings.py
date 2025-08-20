@@ -11,8 +11,8 @@ BASE_DIR = Path(__file__).resolve().parent.parent
 # Load env from project root and backend folder for local dev
 if load_dotenv is not None:
     try:
-        load_dotenv(BASE_DIR.parent / ".env")
-        load_dotenv(BASE_DIR / ".env")
+        load_dotenv(BASE_DIR.parent / ".env", override=True)
+        load_dotenv(BASE_DIR / ".env", override=True)
     except Exception:
         pass
 
@@ -152,11 +152,38 @@ ACCOUNT_EMAIL_REQUIRED = True
 ACCOUNT_USERNAME_REQUIRED = False
 # Using default Django User model which includes 'username' field
 ACCOUNT_USER_MODEL_USERNAME_FIELD = "username"
-LOGIN_REDIRECT_URL = "/"
+# Socialaccount behavior tweaks for SPA
+SOCIALACCOUNT_EMAIL_REQUIRED = True
+SOCIALACCOUNT_EMAIL_VERIFICATION = "optional"
+SOCIALACCOUNT_AUTO_SIGNUP = True
+SOCIALACCOUNT_ALLOW_SIGNUPS = True
+# Frontend/base URL to redirect to after login/logout/email confirmation
+FRONTEND_URL = os.getenv("FRONTEND_URL", "http://localhost:3000")
+
+# After successful login (including social), redirect to SPA dashboard
+LOGIN_REDIRECT_URL = os.getenv("LOGIN_REDIRECT_URL", f"{FRONTEND_URL}/dashboard")
+
+# After logout, send users back to SPA login
+ACCOUNT_LOGOUT_REDIRECT_URL = os.getenv("LOGOUT_REDIRECT_URL", f"{FRONTEND_URL}/login")
+
+# Email confirmation redirects (optional)
+ACCOUNT_EMAIL_CONFIRMATION_ANONYMOUS_REDIRECT_URL = os.getenv(
+    "EMAIL_CONFIRMATION_ANON_REDIRECT_URL", f"{FRONTEND_URL}/login"
+)
+ACCOUNT_EMAIL_CONFIRMATION_AUTHENTICATED_REDIRECT_URL = os.getenv(
+    "EMAIL_CONFIRMATION_AUTH_REDIRECT_URL", f"{FRONTEND_URL}/dashboard"
+)
+
+# Skip intermediate confirmation screen for social login flows
+SOCIALACCOUNT_LOGIN_ON_GET = True
 AUTHENTICATION_BACKENDS = (
     "django.contrib.auth.backends.ModelBackend",
     "allauth.account.auth_backends.AuthenticationBackend",
 )
+
+# Use a custom adapter to redirect back to the SPA with JWT tokens
+SOCIALACCOUNT_ADAPTER = "api.adapters.CustomSocialAccountAdapter"
+ACCOUNT_ADAPTER = "api.adapters.CustomAccountAdapter"
 
 # dj-rest-auth / JWT
 REST_USE_JWT = True
