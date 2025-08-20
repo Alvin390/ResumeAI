@@ -266,5 +266,11 @@ CSRF_TRUSTED_ORIGINS = [
 CELERY_BROKER_URL = os.getenv("CELERY_BROKER_URL", os.getenv("REDIS_URL", "redis://localhost:6379/0"))
 CELERY_RESULT_BACKEND = os.getenv("CELERY_RESULT_BACKEND", CELERY_BROKER_URL)
 
+# Run tasks eagerly (synchronously) when no worker is available.
+# Enable by setting env var CELERY_TASK_ALWAYS_EAGER=true (recommended on Render free tier).
+CELERY_TASK_ALWAYS_EAGER = os.getenv("CELERY_TASK_ALWAYS_EAGER", "False").strip().lower() in {"1", "true", "yes", "on"}
+# Propagate exceptions to the caller when running eagerly.
+CELERY_TASK_EAGER_PROPAGATES = os.getenv("CELERY_TASK_EAGER_PROPAGATES", "True").strip().lower() in {"1", "true", "yes", "on"}
+
 # File storage mode
 FILE_STORAGE_MODE = os.getenv("FILE_STORAGE_MODE", "db")

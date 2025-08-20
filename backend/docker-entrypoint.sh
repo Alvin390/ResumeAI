@@ -3,8 +3,16 @@ set -e
 
 python manage.py migrate --noinput
 
-# Start Celery worker in background
-celery -A resumeai worker -l info &
+# Optionally start Celery worker in background
+# Enable by setting CELERY_ENABLED=true in the environment
+if [ "${CELERY_ENABLED}" = "true" ] || [ "${CELERY_ENABLED}" = "1" ]; then
+  # Default to low concurrency on small instances
+  : "${CELERY_CONCURRENCY:=1}"
+  echo "Starting Celery worker (concurrency=${CELERY_CONCURRENCY})..."
+  celery -A resumeai worker -l info --concurrency="${CELERY_CONCURRENCY}" &
+else
+  echo "CELERY_ENABLED is not set. Skipping Celery worker startup."
+fi
 
 # Start Django server
 python manage.py runserver 0.0.0.0:8000
