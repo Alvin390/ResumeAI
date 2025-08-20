@@ -292,6 +292,43 @@ elif RENDER_EXTERNAL_HOSTNAME:
     if _origin not in CSRF_TRUSTED_ORIGINS:
         CSRF_TRUSTED_ORIGINS.append(_origin)
 
+# Auto-extend CORS/CSRF with production frontend origins
+_frontend_url = os.getenv("FRONTEND_URL")
+if _frontend_url:
+    try:
+        _p = urlparse(_frontend_url)
+        if _p.scheme and _p.hostname:
+            _origin = f"{_p.scheme}://{_p.hostname}"
+            if _p.port:
+                _origin = f"{_origin}:{_p.port}"
+            if _origin not in CORS_ALLOWED_ORIGINS:
+                CORS_ALLOWED_ORIGINS.append(_origin)
+            if _origin not in CSRF_TRUSTED_ORIGINS:
+                CSRF_TRUSTED_ORIGINS.append(_origin)
+    except Exception:
+        pass
+
+# Common Vercel env exposes domain without scheme
+_vercel_url = os.getenv("VERCEL_URL")
+if _vercel_url:
+    try:
+        _origin = f"https://{_vercel_url.strip()}"
+        if _origin not in CORS_ALLOWED_ORIGINS:
+            CORS_ALLOWED_ORIGINS.append(_origin)
+        if _origin not in CSRF_TRUSTED_ORIGINS:
+            CSRF_TRUSTED_ORIGINS.append(_origin)
+    except Exception:
+        pass
+
+# Allow manual extra origins via comma-separated env
+_extra = os.getenv("CORS_EXTRA_ORIGINS", "")
+if _extra:
+    for _o in [o.strip() for o in _extra.split(",") if o.strip()]:
+        if _o not in CORS_ALLOWED_ORIGINS:
+            CORS_ALLOWED_ORIGINS.append(_o)
+        if _o not in CSRF_TRUSTED_ORIGINS:
+            CSRF_TRUSTED_ORIGINS.append(_o)
+
 # Celery
 # Prefer explicit CELERY_* vars, then REDIS_URL, then default localhost
 CELERY_BROKER_URL = os.getenv("CELERY_BROKER_URL", os.getenv("REDIS_URL", "redis://localhost:6379/0"))
