@@ -1,6 +1,7 @@
 import os
 from pathlib import Path
 from datetime import timedelta
+from urllib.parse import urlparse, parse_qsl
 try:
     from dotenv import load_dotenv  # type: ignore
 except Exception:  # pragma: no cover
@@ -93,6 +94,8 @@ TEMPLATES = [
 WSGI_APPLICATION = "resumeai.wsgi.application"
 
 USE_SQLITE = os.getenv("USE_SQLITE", "True") == "True"
+DB_CONN_MAX_AGE = int(os.getenv("DB_CONN_MAX_AGE", "60"))
+POSTGRES_SSLMODE = os.getenv("POSTGRES_SSLMODE", "require")
 
 if USE_SQLITE:
     DATABASES = {
@@ -102,16 +105,61 @@ if USE_SQLITE:
         }
     }
 else:
-    DATABASES = {
-        "default": {
-            "ENGINE": "django.db.backends.postgresql",
-            "NAME": os.getenv("POSTGRES_DB", "resumeai"),
-            "USER": os.getenv("POSTGRES_USER", "resumeai"),
-            "PASSWORD": os.getenv("POSTGRES_PASSWORD", "resumeai"),
-            "HOST": os.getenv("POSTGRES_HOST", "localhost"),
-            "PORT": os.getenv("POSTGRES_PORT", "5432"),
+    # Prefer DATABASE_URL if provided (e.g., Neon/Supabase):
+    # Example: postgresql://user:pass@host:5432/dbname?sslmode=require
+    database_url = os.getenv("DATABASE_URL", "").strip()
+    # Be resilient to values copied with surrounding quotes
+    if (database_url.startswith("'") and database_url.endswith("'")) or (
+        database_url.startswith('"') and database_url.endswith('"')
+    ):
+        database_url = database_url[1:-1].strip()
+    if database_url:
+        try:
+            parsed = urlparse(database_url)
+            db_name = (parsed.path or "/").lstrip("/")
+            options = dict(parse_qsl(parsed.query or ""))
+            # Ensure sslmode is present (Neon/Supabase require TLS)
+            options.setdefault("sslmode", POSTGRES_SSLMODE)
+
+            DATABASES = {
+                "default": {
+                    "ENGINE": "django.db.backends.postgresql",
+                    "NAME": db_name,
+                    "USER": parsed.username,
+                    "PASSWORD": parsed.password,
+                    "HOST": parsed.hostname,
+                    "PORT": parsed.port or os.getenv("POSTGRES_PORT", "5432"),
+                    "CONN_MAX_AGE": DB_CONN_MAX_AGE,
+                    "OPTIONS": options,
+                }
+            }
+        except Exception:
+            # Fallback to discrete POSTGRES_* env vars if parsing fails
+            DATABASES = {
+                "default": {
+                    "ENGINE": "django.db.backends.postgresql",
+                    "NAME": os.getenv("POSTGRES_DB", "resumeai"),
+                    "USER": os.getenv("POSTGRES_USER", "resumeai"),
+                    "PASSWORD": os.getenv("POSTGRES_PASSWORD", "resumeai"),
+                    "HOST": os.getenv("POSTGRES_HOST", "localhost"),
+                    "PORT": os.getenv("POSTGRES_PORT", "5432"),
+                    "CONN_MAX_AGE": DB_CONN_MAX_AGE,
+                    "OPTIONS": {"sslmode": POSTGRES_SSLMODE},
+                }
+            }
+    else:
+        DATABASES = {
+            "default": {
+                "ENGINE": "django.db.backends.postgresql",
+                "NAME": os.getenv("POSTGRES_DB", "resumeai"),
+                "USER": os.getenv("POSTGRES_USER", "resumeai"),
+                "PASSWORD": os.getenv("POSTGRES_PASSWORD", "resumeai"),
+                "HOST": os.getenv("POSTGRES_HOST", "localhost"),
+                "PORT": os.getenv("POSTGRES_PORT", "5432"),
+                "CONN_MAX_AGE": DB_CONN_MAX_AGE,
+                "OPTIONS": {"sslmode": POSTGRES_SSLMODE},
+            }
         }
-    }
 
 AUTH_PASSWORD_VALIDATORS = [
     {"NAME": "django.contrib.auth.password_validation.UserAttributeSimilarityValidator"},
