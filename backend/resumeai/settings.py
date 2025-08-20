@@ -19,7 +19,22 @@ if load_dotenv is not None:
 
 SECRET_KEY = os.getenv("DJANGO_SECRET_KEY", "dev-secret")
 DEBUG = os.getenv("DJANGO_DEBUG", "True") == "True"
-ALLOWED_HOSTS = os.getenv("DJANGO_ALLOWED_HOSTS", "localhost,127.0.0.1").split(",")
+ALLOWED_HOSTS = [
+    h.strip()
+    for h in os.getenv("DJANGO_ALLOWED_HOSTS", "localhost,127.0.0.1").split(",")
+    if h.strip()
+]
+RENDER_EXTERNAL_HOSTNAME = os.getenv("RENDER_EXTERNAL_HOSTNAME")
+if RENDER_EXTERNAL_HOSTNAME and RENDER_EXTERNAL_HOSTNAME not in ALLOWED_HOSTS:
+    ALLOWED_HOSTS.append(RENDER_EXTERNAL_HOSTNAME)
+RENDER_EXTERNAL_URL = os.getenv("RENDER_EXTERNAL_URL")
+if RENDER_EXTERNAL_URL:
+    try:
+        parsed_render = urlparse(RENDER_EXTERNAL_URL)
+        if parsed_render.hostname and parsed_render.hostname not in ALLOWED_HOSTS:
+            ALLOWED_HOSTS.append(parsed_render.hostname)
+    except Exception:
+        pass
 
 INSTALLED_APPS = [
     "django.contrib.admin",
@@ -260,6 +275,22 @@ CSRF_TRUSTED_ORIGINS = [
     "http://localhost:5173",
     "http://127.0.0.1:5173",
 ]
+
+# Auto-extend CSRF trusted origins with Render external URL/hostname
+_render_url = os.getenv("RENDER_EXTERNAL_URL")
+if _render_url:
+    try:
+        _p = urlparse(_render_url)
+        if _p.scheme and _p.hostname:
+            _origin = f"{_p.scheme}://{_p.hostname}"
+            if _origin not in CSRF_TRUSTED_ORIGINS:
+                CSRF_TRUSTED_ORIGINS.append(_origin)
+    except Exception:
+        pass
+elif RENDER_EXTERNAL_HOSTNAME:
+    _origin = f"https://{RENDER_EXTERNAL_HOSTNAME}"
+    if _origin not in CSRF_TRUSTED_ORIGINS:
+        CSRF_TRUSTED_ORIGINS.append(_origin)
 
 # Celery
 # Prefer explicit CELERY_* vars, then REDIS_URL, then default localhost
