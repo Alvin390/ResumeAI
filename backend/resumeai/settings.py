@@ -334,6 +334,7 @@ if _extra:
 # Prefer explicit CELERY_* vars, then REDIS_URL, then default localhost
 CELERY_BROKER_URL = os.getenv("CELERY_BROKER_URL", os.getenv("REDIS_URL", "redis://localhost:6379/0"))
 CELERY_RESULT_BACKEND = os.getenv("CELERY_RESULT_BACKEND", CELERY_BROKER_URL)
+CELERY_DISABLE_RESULT_BACKEND = os.getenv("CELERY_DISABLE_RESULT_BACKEND", "False").strip().lower() in {"1", "true", "yes", "on"}
 
 # Run tasks eagerly (synchronously) when no worker is available.
 # Enable by setting env var CELERY_TASK_ALWAYS_EAGER=true (recommended on Render free tier).
@@ -363,6 +364,17 @@ if str(CELERY_BROKER_URL).startswith("rediss://") or str(CELERY_RESULT_BACKEND).
 CELERY_WORKER_PREFETCH_MULTIPLIER = int(os.getenv("CELERY_WORKER_PREFETCH_MULTIPLIER", "4"))
 # Auto-expire task results to keep memory/Redis usage low (seconds)
 CELERY_RESULT_EXPIRES = int(os.getenv("CELERY_RESULT_EXPIRES", "3600"))
+# Recycle worker processes periodically to mitigate leaks (lower = less memory growth, more respawns)
+CELERY_WORKER_MAX_TASKS_PER_CHILD = int(os.getenv("CELERY_WORKER_MAX_TASKS_PER_CHILD", "0"))  # 0 means disabled
+# Limit broker connection pool to avoid too many sockets on tiny instances
+CELERY_BROKER_POOL_LIMIT = int(os.getenv("CELERY_BROKER_POOL_LIMIT", "10"))
+# If your app doesn't need Celery to store task return values, ignore results to reduce Redis usage
+CELERY_TASK_IGNORE_RESULT = os.getenv("CELERY_TASK_IGNORE_RESULT", "False").lower() in {"1", "true", "yes"}
+
+# If explicitly disabled, remove result backend and always ignore results
+if CELERY_DISABLE_RESULT_BACKEND:
+    CELERY_RESULT_BACKEND = None
+    CELERY_TASK_IGNORE_RESULT = True
 
 # File storage mode
 FILE_STORAGE_MODE = os.getenv("FILE_STORAGE_MODE", "db")

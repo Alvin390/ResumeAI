@@ -16,3 +16,4 @@ fpdf2==2.7.9
 scikit-learn==1.4.2
 numpy==1.26.4
 scipy==1.12.0
+gevent==24.2.1
