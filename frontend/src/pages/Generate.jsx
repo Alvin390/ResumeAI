@@ -111,6 +111,19 @@ export default function Generate() {
     }, 1500)
     return () => { alive = false; clearInterval(interval) }
   }, [jobId, navigate])
+ 
+  // Auto-hide cancelled job after a short delay
+  useEffect(() => {
+    if (status !== 'cancelled' || !jobId) return
+    const t = setTimeout(() => {
+      // Clear UI state so the card disappears
+      setJobId(null)
+      setStatus('idle')
+      setResult({ cover_id: null, cv_id: null })
+      try { sessionStorage.removeItem('gen:last') } catch (_) {}
+    }, 2000)
+    return () => clearTimeout(t)
+  }, [status, jobId])
 
   const onStart = async (e) => {
     e.preventDefault()
