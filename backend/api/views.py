@@ -45,6 +45,31 @@ def celery_health(request):
         data["workers"] = len(replies)
         data["replies"] = replies
         ok = len(replies) > 0
+
+        # Try to fetch inspect stats for more detail (pool type, max concurrency)
+        try:
+            insp = celery_app.control.inspect(timeout=0.8)
+            stats = insp.stats() or {}
+            workers_detail = {}
+            for worker_name, st in stats.items():
+                pool = (st or {}).get("pool") or {}
+                pool_type = pool.get("pool") or pool.get("type")
+                max_conc = pool.get("max-concurrency") or pool.get("max_concurrency")
+                processes = pool.get("processes")
+                if isinstance(processes, list):
+                    process_count = len(processes)
+                else:
+                    process_count = processes
+                workers_detail[worker_name] = {
+                    "pool": pool_type,
+                    "max_concurrency": max_conc,
+                    "process_count": process_count,
+                }
+            if workers_detail:
+                data["workers_detail"] = workers_detail
+        except Exception as e_stats:
+            data["inspect_error"] = str(e_stats)
+
         return JsonResponse({"status": "ok" if ok else "down", **data}, status=200 if ok else 503)
     except Exception as e:
         data["error"] = str(e)
