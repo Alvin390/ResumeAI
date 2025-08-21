@@ -7,7 +7,7 @@ import hashlib
 import threading
 from collections import defaultdict
 from datetime import datetime, timedelta
-from typing import Dict, List, Optional, Tuple, Union
+from typing import Dict, List, Optional, Tuple, Union, Callable
 from functools import lru_cache
 from dataclasses import dataclass
 import pickle
@@ -498,12 +498,15 @@ def choose_provider() -> str:
     return providers[0] if providers else "mock"
 
 
-def _make_request_with_retry(func, *args, max_retries: int = 3, base_delay: float = 1.0) -> str:
+def _make_request_with_retry(func, *args, max_retries: int = 3, base_delay: float = 1.0, cancel_check: Optional[Callable[[], bool]] = None) -> str:
     """Make API request with exponential backoff retry logic and comprehensive error handling."""
     last_exception = None
     
     for attempt in range(max_retries):
         try:
+            # cooperative cancellation before each attempt
+            if cancel_check and cancel_check():
+                raise RuntimeError("Cancelled by user")
             result = func(*args)
             if result:  # Ensure we got a valid response
                 return result
@@ -519,7 +522,14 @@ def _make_request_with_retry(func, *args, max_retries: int = 3, base_delay: floa
             # Calculate exponential backoff delay
             delay = base_delay * (2 ** attempt)
             logger.warning(f"API request attempt {attempt + 1} failed, retrying in {delay}s: {str(e)}")
-            time.sleep(delay)
+            # Sleep in small increments to allow fast cancellation
+            slept = 0.0
+            step = min(0.2, delay)
+            while slept < delay:
+                if cancel_check and cancel_check():
+                    raise RuntimeError("Cancelled by user")
+                time.sleep(step)
+                slept += step
     
     # This should never be reached, but just in case
     raise last_exception or Exception("Unknown error in retry logic")
@@ -2342,7 +2352,7 @@ def _build_cv_prompt(jd_text: str, cv_text: str | None, template: str = "classic
     return prompt_text, variant
 
 
-def generate_cover_letter(jd_text: str, cv_text: str | None = None, user_id: str = "anonymous") -> Tuple[str, str, List[Dict]]:
+def generate_cover_letter(jd_text: str, cv_text: str | None = None, user_id: str = "anonymous", cancel_check: Optional[Callable[[], bool]] = None) -> Tuple[str, str, List[Dict]]:
     """
     Returns (provider_used, content, trace)
     - Enhanced with ML quality prediction, A/B testing, and semantic caching
@@ -2350,6 +2360,9 @@ def generate_cover_letter(jd_text: str, cv_text: str | None = None, user_id: str
     """
     ai_dry_run = _bool_env("AI_DRY_RUN", True)
     trace: List[Dict] = []
+    # Fast exit if cancellation requested
+    if cancel_check and cancel_check():
+        raise RuntimeError("Cancelled by user")
     
     # A/B Testing: Assign variant bucket (for trace only)
     generation_variant = "control"
@@ -2394,6 +2407,9 @@ def generate_cover_letter(jd_text: str, cv_text: str | None = None, user_id: str
             trace.append({"ml_prediction": ml_prediction})
         except Exception as e:
             logging.warning(f"ML quality prediction failed: {e}")
+    # Check again after potentially heavy preprocessing
+    if cancel_check and cancel_check():
+        raise RuntimeError("Cancelled by user")
     
     if ai_dry_run:
         # Enhanced mock response with industry detection
@@ -2443,15 +2459,18 @@ def generate_cover_letter(jd_text: str, cv_text: str | None = None, user_id: str
         if PROVIDER_HEALTH[provider]["failures"] > 5:
             trace.append({"provider": provider, "status": "skipped", "reason": "too_many_failures", "duration_ms": 0})
             continue
+        # cancellation check before external call
+        if cancel_check and cancel_check():
+            raise RuntimeError("Cancelled by user")
         
         t0 = time.perf_counter()
         try:
             if provider == "gemini" and os.environ.get("GEMINI_API_KEY"):
-                out = _make_request_with_retry(_gemini_generate, prompt, timeout)
+                out = _make_request_with_retry(_gemini_generate, prompt, timeout, cancel_check=cancel_check)
             elif provider == "deepseek" and os.environ.get("DEEPSEEK_API_KEY"):
-                out = _make_request_with_retry(_deepseek_generate, prompt, timeout)
+                out = _make_request_with_retry(_deepseek_generate, prompt, timeout, cancel_check=cancel_check)
             elif provider == "groq" and os.environ.get("GROQ_API_KEY"):
-                out = _make_request_with_retry(_groq_generate, prompt, timeout)
+                out = _make_request_with_retry(_groq_generate, prompt, timeout, cancel_check=cancel_check)
             else:
                 continue
             
@@ -2571,7 +2590,7 @@ def generate_cover_letter(jd_text: str, cv_text: str | None = None, user_id: str
     return "basic_fallback", basic_fallback, trace
 
 
-def generate_cv(jd_text: str, cv_text: str | None = None, template: str = "classic") -> Tuple[str, str, List[Dict]]:
+def generate_cv(jd_text: str, cv_text: str | None = None, template: str = "classic", cancel_check: Optional[Callable[[], bool]] = None) -> Tuple[str, str, List[Dict]]:
     """
     Returns (provider_used, content, trace) for a generated CV.
     - Enhanced with caching, retry logic, and provider health tracking
@@ -2580,6 +2599,8 @@ def generate_cv(jd_text: str, cv_text: str | None = None, template: str = "class
     """
     ai_dry_run = _bool_env("AI_DRY_RUN", True)
     trace: List[Dict] = []
+    if cancel_check and cancel_check():
+        raise RuntimeError("Cancelled by user")
     
     # Build prompt and select adaptive variant for caching/semcache
     prompt, variant_used = _build_cv_prompt(jd_text or "", cv_text or "", template)
@@ -2618,6 +2639,8 @@ def generate_cv(jd_text: str, cv_text: str | None = None, template: str = "class
             trace.append({"ml_prediction": ml_prediction})
         except Exception as e:
             logging.warning(f"ML quality prediction (cv) failed: {e}")
+    if cancel_check and cancel_check():
+        raise RuntimeError("Cancelled by user")
     
     if ai_dry_run:
         # Enhanced mock response with industry and template awareness

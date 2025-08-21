@@ -67,12 +67,14 @@ class GenerationJob(models.Model):
     STATUS_QUEUED = "queued"
     STATUS_RUNNING = "running"
     STATUS_DONE = "done"
+    STATUS_CANCELLED = "cancelled"
     STATUS_ERROR = "error"
     STATUSES = [
         (STATUS_QUEUED, "Queued"),
         (STATUS_RUNNING, "Running"),
         (STATUS_DONE, "Done"),
         (STATUS_ERROR, "Error"),
+        (STATUS_CANCELLED, "Cancelled"),
     ]
 
     user = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name="generation_jobs")
@@ -83,6 +85,8 @@ class GenerationJob(models.Model):
 
     status = models.CharField(max_length=12, choices=STATUSES, default=STATUS_QUEUED)
     logs = models.TextField(blank=True, default="")
+    celery_task_id = models.CharField(max_length=100, blank=True, default="", db_index=True)
+    cancel_requested = models.BooleanField(default=False)
 
     result_generated_cv = models.ForeignKey('Document', null=True, blank=True, on_delete=models.SET_NULL, related_name="generated_cv_jobs")
     result_cover_letter = models.ForeignKey('Document', null=True, blank=True, on_delete=models.SET_NULL, related_name="cover_letter_jobs")

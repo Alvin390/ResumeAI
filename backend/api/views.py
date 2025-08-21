@@ -580,7 +580,14 @@ class GenerationStartView(APIView):
         )
         # Enqueue async processing
         try:
-            generate_documents.delay(gen.id)
+            async_res = generate_documents.delay(gen.id)
+            # Save the Celery task id if available (works in eager mode as well)
+            try:
+                if getattr(async_res, 'id', None):
+                    gen.celery_task_id = async_res.id
+                    gen.save(update_fields=["celery_task_id", "updated_at"])
+            except Exception:
+                pass
         except Exception as e:
             # If Celery not running, leave queued; frontend can still see queued status
             try:
@@ -631,6 +638,67 @@ class GenerationStatusView(APIView):
         except Exception:
             pass
         return Response(GenerationJobSerializer(gen).data)
+
+
+class GenerationCancelView(APIView):
+    permission_classes = [permissions.IsAuthenticated]
+
+    def post(self, request, pk: int):
+        try:
+            gen = GenerationJob.objects.get(id=pk, user=request.user)
+        except GenerationJob.DoesNotExist:
+            return Response({"detail": "Not found"}, status=status.HTTP_404_NOT_FOUND)
+
+        # If already in a terminal state, no-op
+        if gen.status in {GenerationJob.STATUS_DONE, GenerationJob.STATUS_ERROR, GenerationJob.STATUS_CANCELLED}:
+            try:
+                AuditLog.objects.create(
+                    user=request.user,
+                    category="ai",
+                    action="generation_cancel_terminal",
+                    path=request.path,
+                    method=request.method,
+                    status_code=200,
+                    extra={"job_id": gen.id, "status": gen.status},
+                )
+            except Exception:
+                pass
+            return Response({"status": gen.status, "detail": "Job already finished"}, status=status.HTTP_200_OK)
+
+        # Mark cancel requested
+        gen.cancel_requested = True
+        # If still queued, reflect cancelled immediately
+        if gen.status == GenerationJob.STATUS_QUEUED:
+            gen.status = GenerationJob.STATUS_CANCELLED
+            gen.logs = (gen.logs or "") + f"[{settings.TIME_ZONE if hasattr(settings,'TIME_ZONE') else ''}] Cancellation requested while queued\n"
+        else:
+            gen.logs = (gen.logs or "") + "Cancellation requested by user\n"
+        gen.save(update_fields=["cancel_requested", "status", "logs", "updated_at"])
+
+        # Try to revoke the Celery task if possible
+        revoked = False
+        if celery_app and (gen.celery_task_id or ""):
+            try:
+                # Cooperative revoke; we do not terminate forcefully
+                celery_app.control.revoke(gen.celery_task_id, terminate=False)
+                revoked = True
+            except Exception:
+                revoked = False
+
+        try:
+            AuditLog.objects.create(
+                user=request.user,
+                category="ai",
+                action="generation_cancel",
+                path=request.path,
+                method=request.method,
+                status_code=200,
+                extra={"job_id": gen.id, "revoked": revoked, "task_id": gen.celery_task_id},
+            )
+        except Exception:
+            pass
+
+        return Response({"status": gen.status, "revoked": revoked}, status=status.HTTP_200_OK)
 
 
 class JobDescriptionListView(APIView):

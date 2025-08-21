@@ -63,14 +63,21 @@ export default function Generate() {
 
   useEffect(() => {
     if (!jobId) return
-    setStatus('queued')
+    // keep current status; polling will update as needed
     let alive = true
     const interval = setInterval(async () => {
       try {
         const { data } = await api.get(`/generations/${jobId}/status/`)
         setStatus(data.status)
         // console.log('[Generate] polled status', data)
-        if (data.result_cover_letter || data.result_generated_cv || data.status === 'error') {
+        const shouldStop = (
+          data.result_cover_letter ||
+          data.result_generated_cv ||
+          data.status === 'error' ||
+          data.status === 'done' ||
+          data.status === 'cancelled'
+        )
+        if (shouldStop) {
           clearInterval(interval)
           if (!alive) return
           setResult({
@@ -85,6 +92,8 @@ export default function Generate() {
           } catch (_) {}
           if (data.status === 'error') {
             toast.error('Generation failed, check logs')
+          } else if (data.status === 'cancelled') {
+            toast.info('Generation cancelled')
           } else {
             toast.success('Generation completed')
           }
@@ -134,6 +143,27 @@ export default function Generate() {
       const msg = err?.response?.data?.detail || err?.message || 'Failed to start generation'
       setError(msg)
       console.error('[Generate] Start error:', msg)
+      toast.error(msg)
+    }
+  }
+
+  const onCancel = async () => {
+    if (!jobId) return
+    try {
+      await api.post(`/generations/${jobId}/cancel/`)
+      setStatus('cancelled')
+      try {
+        sessionStorage.setItem('gen:last', JSON.stringify({ jobId, status: 'cancelled', result }))
+      } catch (_) {}
+      toast.info('Cancellation requested')
+    } catch (err) {
+      if (err?.response?.status === 401) {
+        console.warn('[Generate] Unauthorized during cancel → redirect to /login')
+        navigate('/login')
+        return
+      }
+      const msg = err?.response?.data?.detail || err?.message || 'Failed to cancel generation'
+      console.error('[Generate] Cancel error:', msg)
       toast.error(msg)
     }
   }
@@ -212,30 +242,42 @@ export default function Generate() {
                       display: 'flex',
                       alignItems: 'center',
                       justifyContent: 'center',
-                      background: status === 'completed' ? 'var(--success)' : 
-                                 status === 'failed' ? 'var(--error)' : 
+                      background: status === 'done' ? 'var(--success)' : 
+                                 status === 'error' ? 'var(--error)' : 
                                  'var(--info)',
                       color: 'white'
                     }}>
                       {status === 'running' && <Loader2 size={20} className="animate-spin" />}
-                      {status === 'completed' && <CheckCircle size={20} />}
-                      {status === 'failed' && <AlertCircle size={20} />}
-                      {status === 'pending' && <Clock size={20} />}
+                      {status === 'done' && <CheckCircle size={20} />}
+                      {status === 'error' && <AlertCircle size={20} />}
+                      {status === 'queued' && <Clock size={20} />}
+                      {status === 'cancelled' && <AlertCircle size={20} />}
                     </div>
                     <div>
                       <div style={{ fontWeight: 600, fontSize: 'var(--text-base)' }}>
                         Generation {status === 'running' ? 'in Progress' : 
-                                  status === 'completed' ? 'Complete' :
-                                  status === 'failed' ? 'Failed' : 'Pending'}
+                                  status === 'done' ? 'Complete' :
+                                  status === 'error' ? 'Failed' :
+                                  status === 'cancelled' ? 'Cancelled' : 'Queued'}
                       </div>
                       <div style={{ color: 'var(--muted)', fontSize: 'var(--text-sm)' }}>
                         Job ID: {jobId}
                       </div>
                     </div>
-                    <div style={{ marginLeft: 'auto' }}>
+                    <div style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: 8 }}>
+                      {(status === 'queued' || status === 'running') && (
+                        <motion.button
+                          className="btn"
+                          whileHover={{ scale: 1.03 }}
+                          whileTap={{ scale: 0.97 }}
+                          onClick={onCancel}
+                        >
+                          Cancel
+                        </motion.button>
+                      )}
                       <span className={`status-badge status-${
-                        status === 'completed' ? 'completed' :
-                        status === 'failed' ? 'error' :
+                        status === 'done' ? 'completed' :
+                        status === 'error' ? 'error' :
                         status === 'running' ? 'running' : 'pending'
                       }`}>
                         {status === 'running' && <Loader2 size={12} className="animate-spin" />}
