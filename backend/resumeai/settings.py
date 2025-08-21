@@ -2,6 +2,7 @@ import os
 from pathlib import Path
 from datetime import timedelta
 from urllib.parse import urlparse, parse_qsl
+import ssl
 try:
     from dotenv import load_dotenv  # type: ignore
 except Exception:  # pragma: no cover
@@ -342,6 +343,20 @@ CELERY_TASK_EAGER_PROPAGATES = os.getenv("CELERY_TASK_EAGER_PROPAGATES", "True")
 
 # Ensure worker retries connecting to broker during startup (useful if Redis is initializing)
 CELERY_BROKER_CONNECTION_RETRY_ON_STARTUP = os.getenv("CELERY_BROKER_CONNECTION_RETRY_ON_STARTUP", "True").strip().lower() in {"1", "true", "yes", "on"}
+
+# If using TLS Redis (rediss://), configure SSL requirements.
+if str(CELERY_BROKER_URL).startswith("rediss://") or str(CELERY_RESULT_BACKEND).startswith("rediss://"):
+    # Env override: NONE (default), OPTIONAL, REQUIRED
+    cert_mode = os.getenv("REDIS_SSL_CERT_REQS", "NONE").strip().upper()
+    _CERT_MAP = {
+        "NONE": ssl.CERT_NONE,
+        "OPTIONAL": ssl.CERT_OPTIONAL,
+        "REQUIRED": ssl.CERT_REQUIRED,
+    }
+    cert_reqs = _CERT_MAP.get(cert_mode, ssl.CERT_NONE)
+    # Celery/Kombu config
+    CELERY_BROKER_USE_SSL = {"ssl_cert_reqs": cert_reqs}
+    CELERY_REDIS_BACKEND_USE_SSL = {"ssl_cert_reqs": cert_reqs}
 
 # File storage mode
 FILE_STORAGE_MODE = os.getenv("FILE_STORAGE_MODE", "db")
