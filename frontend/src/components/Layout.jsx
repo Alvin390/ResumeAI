@@ -1,10 +1,11 @@
 import React, { useEffect, useMemo, useState } from 'react'
 import { NavLink, Link, useLocation } from 'react-router-dom'
 import { motion } from 'framer-motion'
-import { Sun, Moon } from 'lucide-react'
+import { Sun, Moon, Menu, X } from 'lucide-react'
 
 export default function Layout({ authed, status, onLogout, children }) {
   const location = useLocation()
+  const [mobileOpen, setMobileOpen] = useState(false)
   const [theme, setTheme] = useState(() => {
     try {
       const saved = localStorage.getItem('theme')
@@ -24,6 +25,11 @@ export default function Layout({ authed, status, onLogout, children }) {
       localStorage.setItem('theme', theme)
     } catch {}
   }, [theme])
+
+  // Close mobile menu on route change
+  useEffect(() => {
+    setMobileOpen(false)
+  }, [location.pathname])
 
   const links = useMemo(() => {
     const motionProps = { whileHover: { scale: 1.1 }, whileTap: { scale: 0.95 } }
@@ -59,18 +65,44 @@ export default function Layout({ authed, status, onLogout, children }) {
             <motion.div whileHover={{ scale: 1.1 }} whileTap={{ scale: 0.95 }}>
               <Link to="/" className="brand" aria-label="ResumeAI home">ResumeAI</Link>
             </motion.div>
-            <div className="nav" style={{ gap: 8 }}>{links}</div>
+            {/* Desktop links */}
+            <div className="nav-links" style={{ gap: 8 }}>{links}</div>
             <div className="spacer" />
             <span aria-live="polite" style={{ fontSize: 13, color: 'var(--muted)' }}>Health: {status}</span>
-                        <motion.button whileHover={{ scale: 1.1 }} whileTap={{ scale: 0.95 }} className="btn btn-ghost" onClick={() => setTheme(theme === 'light' ? 'dark' : 'light')} aria-label="Toggle theme">
+            
+            <motion.button whileHover={{ scale: 1.1 }} whileTap={{ scale: 0.95 }} className="btn btn-ghost" onClick={() => setTheme(theme === 'light' ? 'dark' : 'light')} aria-label="Toggle theme">
               {theme === 'light' ? <Moon size={18} /> : <Sun size={18} />}
             </motion.button>
             {authed && (
               <motion.button whileHover={{ scale: 1.1 }} whileTap={{ scale: 0.95 }} className="btn" onClick={onLogout} aria-label="Logout">Logout</motion.button>
             )}
+
+            {/* Mobile toggle */}
+            <motion.button
+              whileHover={{ scale: 1.1 }}
+              whileTap={{ scale: 0.95 }}
+              className="btn btn-ghost mobile-toggle"
+              aria-label="Toggle navigation"
+              aria-controls="mobile-menu"
+              aria-expanded={mobileOpen}
+              onClick={() => setMobileOpen(v => !v)}
+            >
+              {mobileOpen ? <X size={20} /> : <Menu size={20} />}
+            </motion.button>
           </nav>
         </div>
       </motion.div>
+
+      {/* Mobile menu (visible under 768px via CSS) */}
+      {mobileOpen && (
+        <div id="mobile-menu" className="mobile-menu" role="dialog" aria-label="Mobile navigation">
+          <div className="container">
+            <div className="mobile-links">
+              {links}
+            </div>
+          </div>
+        </div>
+      )}
       <motion.div
         className="container page"
         style={{ paddingTop: 24, paddingBottom: 40 }}

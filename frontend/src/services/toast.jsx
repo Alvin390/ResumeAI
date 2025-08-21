@@ -32,16 +32,11 @@ export function ToastProvider({ children }) {
   return (
     <ToastCtx.Provider value={api}>
       {children}
-      <div style={{ position: 'fixed', top: 12, right: 12, display: 'grid', gap: 8, zIndex: 9999 }}>
+      <div className="toast-container">
         {toasts.map(t => (
           <div key={t.id} onClick={() => remove(t.id)}
+               className="toast"
                style={{
-                 maxWidth: 360,
-                 padding: '10px 12px',
-                 borderRadius: 6,
-                 color: '#111',
-                 boxShadow: '0 4px 12px rgba(0,0,0,0.12)',
-                 cursor: 'pointer',
                  background: t.type === 'success' ? '#D1FAE5' : t.type === 'error' ? '#FEE2E2' : '#E5E7EB',
                  border: '1px solid ' + (t.type === 'success' ? '#10B981' : t.type === 'error' ? '#EF4444' : '#9CA3AF')
                }}>

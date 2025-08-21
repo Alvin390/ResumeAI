@@ -156,7 +156,7 @@ export default function EditorPage() {
   }, [editor, id, fileName])
 
   return (
-    <div style={{ maxWidth: 1100, margin: '24px auto', display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 16 }}>
+    <div className="editor-grid">
       <div>
         <h2>Edit Document</h2>
         {loading ? <div>Loading…</div> : null}
@@ -186,14 +186,11 @@ export default function EditorPage() {
               onClick={() => editor && editor.chain().focus().toggleBold().run()}
               disabled={!editor}
               aria-pressed={editor?.isActive('bold')}
-              className="btn"
+              className="btn btn-icon"
               style={{ 
                 background: editor?.isActive('bold') ? 'var(--primary)' : 'transparent',
                 color: editor?.isActive('bold') ? 'white' : 'var(--text)',
-                border: '1px solid var(--border)',
-                padding: '8px',
-                minWidth: 36,
-                height: 36
+                border: '1px solid var(--border)'
               }}
               title="Bold"
             >
@@ -205,14 +202,11 @@ export default function EditorPage() {
               onClick={() => editor && editor.chain().focus().toggleItalic().run()}
               disabled={!editor}
               aria-pressed={editor?.isActive('italic')}
-              className="btn"
+              className="btn btn-icon"
               style={{ 
                 background: editor?.isActive('italic') ? 'var(--primary)' : 'transparent',
                 color: editor?.isActive('italic') ? 'white' : 'var(--text)',
-                border: '1px solid var(--border)',
-                padding: '8px',
-                minWidth: 36,
-                height: 36
+                border: '1px solid var(--border)'
               }}
               title="Italic"
             >
@@ -224,14 +218,11 @@ export default function EditorPage() {
               onClick={() => editor && editor.chain().focus().toggleUnderline().run()}
               disabled={!editor}
               aria-pressed={editor?.isActive('underline')}
-              className="btn"
+              className="btn btn-icon"
               style={{ 
                 background: editor?.isActive('underline') ? 'var(--primary)' : 'transparent',
                 color: editor?.isActive('underline') ? 'white' : 'var(--text)',
-                border: '1px solid var(--border)',
-                padding: '8px',
-                minWidth: 36,
-                height: 36
+                border: '1px solid var(--border)'
               }}
               title="Underline"
             >
@@ -250,14 +241,11 @@ export default function EditorPage() {
               onClick={() => editor && editor.chain().focus().toggleHeading({ level: 1 }).run()}
               disabled={!editor}
               aria-pressed={editor?.isActive('heading', { level: 1 })}
-              className="btn"
+              className="btn btn-icon"
               style={{ 
                 background: editor?.isActive('heading', { level: 1 }) ? 'var(--primary)' : 'transparent',
                 color: editor?.isActive('heading', { level: 1 }) ? 'white' : 'var(--text)',
-                border: '1px solid var(--border)',
-                padding: '8px',
-                minWidth: 36,
-                height: 36
+                border: '1px solid var(--border)'
               }}
               title="Heading 1"
             >
@@ -269,14 +257,11 @@ export default function EditorPage() {
               onClick={() => editor && editor.chain().focus().toggleHeading({ level: 2 }).run()}
               disabled={!editor}
               aria-pressed={editor?.isActive('heading', { level: 2 })}
-              className="btn"
+              className="btn btn-icon"
               style={{ 
                 background: editor?.isActive('heading', { level: 2 }) ? 'var(--primary)' : 'transparent',
                 color: editor?.isActive('heading', { level: 2 }) ? 'white' : 'var(--text)',
-                border: '1px solid var(--border)',
-                padding: '8px',
-                minWidth: 36,
-                height: 36
+                border: '1px solid var(--border)'
               }}
               title="Heading 2"
             >
@@ -295,14 +280,11 @@ export default function EditorPage() {
               onClick={() => editor && editor.chain().focus().toggleBulletList().run()}
               disabled={!editor}
               aria-pressed={editor?.isActive('bulletList')}
-              className="btn"
+              className="btn btn-icon"
               style={{ 
                 background: editor?.isActive('bulletList') ? 'var(--primary)' : 'transparent',
                 color: editor?.isActive('bulletList') ? 'white' : 'var(--text)',
-                border: '1px solid var(--border)',
-                padding: '8px',
-                minWidth: 36,
-                height: 36
+                border: '1px solid var(--border)'
               }}
               title="Bullet List"
             >
@@ -314,14 +296,11 @@ export default function EditorPage() {
               onClick={() => editor && editor.chain().focus().toggleOrderedList().run()}
               disabled={!editor}
               aria-pressed={editor?.isActive('orderedList')}
-              className="btn"
+              className="btn btn-icon"
               style={{ 
                 background: editor?.isActive('orderedList') ? 'var(--primary)' : 'transparent',
                 color: editor?.isActive('orderedList') ? 'white' : 'var(--text)',
-                border: '1px solid var(--border)',
-                padding: '8px',
-                minWidth: 36,
-                height: 36
+                border: '1px solid var(--border)'
               }}
               title="Numbered List"
             >
@@ -339,14 +318,11 @@ export default function EditorPage() {
               whileTap={{ scale: 0.95 }}
               onClick={() => editor && editor.chain().focus().undo().run()}
               disabled={!editor || !editor.can().undo()}
-              className="btn"
+              className="btn btn-icon"
               style={{ 
                 background: 'transparent',
                 color: 'var(--text)',
                 border: '1px solid var(--border)',
-                padding: '8px',
-                minWidth: 36,
-                height: 36,
                 opacity: !editor || !editor.can().undo() ? 0.5 : 1
               }}
               title="Undo"
@@ -358,14 +334,11 @@ export default function EditorPage() {
               whileTap={{ scale: 0.95 }}
               onClick={() => editor && editor.chain().focus().redo().run()}
               disabled={!editor || !editor.can().redo()}
-              className="btn"
+              className="btn btn-icon"
               style={{ 
                 background: 'transparent',
                 color: 'var(--text)',
                 border: '1px solid var(--border)',
-                padding: '8px',
-                minWidth: 36,
-                height: 36,
                 opacity: !editor || !editor.can().redo() ? 0.5 : 1
               }}
               title="Redo"
@@ -484,9 +457,9 @@ export default function EditorPage() {
       <div>
         <h3>PDF Preview</h3>
         {previewUrl ? (
-          <iframe title="preview" src={previewUrl} style={{ width: '100%', height: 600, border: '1px solid var(--border)', borderRadius: 12, background: 'var(--bg-elev)' }} />
+          <iframe title="preview" src={previewUrl} className="editor-preview" />
         ) : (
-          <div style={{ height: 600, display:'flex', alignItems:'center', justifyContent:'center', border:'1px solid var(--border)', borderRadius:12, background: 'var(--bg-elev)' }}>
+          <div className="editor-preview" style={{ display:'flex', alignItems:'center', justifyContent:'center' }}>
             <span>No preview</span>
           </div>
         )}
