@@ -358,5 +358,11 @@ if str(CELERY_BROKER_URL).startswith("rediss://") or str(CELERY_RESULT_BACKEND).
     CELERY_BROKER_USE_SSL = {"ssl_cert_reqs": cert_reqs}
     CELERY_REDIS_BACKEND_USE_SSL = {"ssl_cert_reqs": cert_reqs}
 
+# Celery worker tuning (env-driven)
+# Limit prefetch to reduce memory and improve fairness on small instances
+CELERY_WORKER_PREFETCH_MULTIPLIER = int(os.getenv("CELERY_WORKER_PREFETCH_MULTIPLIER", "4"))
+# Auto-expire task results to keep memory/Redis usage low (seconds)
+CELERY_RESULT_EXPIRES = int(os.getenv("CELERY_RESULT_EXPIRES", "3600"))
+
 # File storage mode
 FILE_STORAGE_MODE = os.getenv("FILE_STORAGE_MODE", "db")
