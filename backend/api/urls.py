@@ -1,6 +1,6 @@
 from django.urls import path
 from .views import (
-    health, ProfileView, UserUpdateView, 
+    health, celery_health, ProfileView, UserUpdateView, 
     DocumentListCreateView, DocumentDownloadView,
     DocumentDetailView,
     DocumentSaveView,
@@ -27,6 +27,7 @@ except ImportError:
 
 urlpatterns = [
     path("health/", health, name="health"),
+    path("health/celery/", celery_health, name="celery-health"),
     path("profile/", ProfileView.as_view(), name="profile"),
     path("profile/photo/", ProfilePhotoView.as_view(), name="profile-photo"),
     path("auth/user/", UserUpdateView.as_view(), name="user-update"),

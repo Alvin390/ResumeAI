@@ -6,11 +6,18 @@ from rest_framework import permissions, status
 from rest_framework.parsers import MultiPartParser, FormParser
 from rest_framework.views import APIView
 from django.contrib.auth import get_user_model
+from django.conf import settings
 import io
 import base64
 from .serializers import ProfileSerializer, DocumentSerializer, JobDescriptionSerializer, GenerationJobSerializer
 from .models import Profile, Document, JobDescription, GenerationJob, AuditLog
 from .tasks import generate_documents
+
+# Import Celery app for health checks
+try:
+    from resumeai import celery_app  # type: ignore
+except Exception:
+    celery_app = None  # type: ignore
 
 User = get_user_model()
 
@@ -18,6 +25,30 @@ User = get_user_model()
 @permission_classes([AllowAny])
 def health(request):
     return JsonResponse({"status": "ok"})
+
+
+@api_view(["GET"])
+@permission_classes([AllowAny])
+def celery_health(request):
+    """
+    Quick Celery health check.
+    - Reports eager mode from settings.
+    - Pings workers (short timeout). Returns count of responding workers.
+    """
+    eager = bool(getattr(settings, "CELERY_TASK_ALWAYS_EAGER", False))
+    data = {"eager": eager}
+    if celery_app is None:
+        data["workers"] = 0
+        return JsonResponse({"status": "unavailable", **data}, status=503)
+    try:
+        replies = celery_app.control.ping(timeout=0.5) or []
+        data["workers"] = len(replies)
+        data["replies"] = replies
+        ok = len(replies) > 0
+        return JsonResponse({"status": "ok" if ok else "down", **data}, status=200 if ok else 503)
+    except Exception as e:
+        data["error"] = str(e)
+        return JsonResponse({"status": "error", **data}, status=503)
 
 class ProfileView(APIView):
     permission_classes = [permissions.IsAuthenticated]

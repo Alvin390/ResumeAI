@@ -340,5 +340,8 @@ CELERY_TASK_ALWAYS_EAGER = os.getenv("CELERY_TASK_ALWAYS_EAGER", "False").strip(
 # Propagate exceptions to the caller when running eagerly.
 CELERY_TASK_EAGER_PROPAGATES = os.getenv("CELERY_TASK_EAGER_PROPAGATES", "True").strip().lower() in {"1", "true", "yes", "on"}
 
+# Ensure worker retries connecting to broker during startup (useful if Redis is initializing)
+CELERY_BROKER_CONNECTION_RETRY_ON_STARTUP = os.getenv("CELERY_BROKER_CONNECTION_RETRY_ON_STARTUP", "True").strip().lower() in {"1", "true", "yes", "on"}
+
 # File storage mode
 FILE_STORAGE_MODE = os.getenv("FILE_STORAGE_MODE", "db")
