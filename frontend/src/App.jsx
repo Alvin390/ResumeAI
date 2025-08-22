@@ -300,8 +300,13 @@ export default function App() {
   }, [navigate])
   const handleLogout = () => {
     try { api.logout() } catch(_) {}
-    if (typeof window !== 'undefined' && window.location) {
-      window.location.replace('/login')
+    // Prefer client-side navigation to avoid full reloads that can 404 on hosts without SPA rewrites
+    try {
+      navigate('/login', { replace: true })
+    } catch {
+      if (typeof window !== 'undefined' && window.location) {
+        window.location.replace('/login')
+      }
     }
   }
   return (
@@ -317,6 +322,8 @@ export default function App() {
           <Route path="/documents" element={<RequireAuth><Documents/></RequireAuth>} />
           <Route path="/profile" element={<RequireAuth><Profile/></RequireAuth>} />
           <Route path="/documents/:id/edit" element={<RequireAuth><Editor/></RequireAuth>} />
+          {/* Fallback to home for any unknown in-app route */}
+          <Route path="*" element={<Navigate to="/" replace />} />
         </Routes>
       </AnimatePresence>
     </Layout>
