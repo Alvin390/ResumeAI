@@ -194,6 +194,19 @@ STATIC_ROOT = BASE_DIR / "staticfiles"
 
 DEFAULT_AUTO_FIELD = "django.db.models.BigAutoField"
 
+# Proxy/HTTPS handling (important for correct OAuth redirect_uri on Render)
+# Trust X-Forwarded-Proto from the proxy so request.is_secure() is accurate.
+SECURE_PROXY_SSL_HEADER = ("HTTP_X_FORWARDED_PROTO", "https")
+# When behind a proxy, allow Django to use X-Forwarded-Host for absolute URLs.
+USE_X_FORWARDED_HOST = True
+# Ensure allauth defaults to https for generated URLs when scheme is ambiguous.
+ACCOUNT_DEFAULT_HTTP_PROTOCOL = "https"
+# Optional: enable strict HTTPS redirects in production via env flag.
+SECURE_SSL_REDIRECT = os.getenv("SECURE_SSL_REDIRECT", "False").strip().lower() in {"1", "true", "yes", "on"}
+# Secure cookies by default (can be relaxed locally by env flags if needed).
+SESSION_COOKIE_SECURE = os.getenv("SESSION_COOKIE_SECURE", "True").strip().lower() in {"1", "true", "yes", "on"}
+CSRF_COOKIE_SECURE = os.getenv("CSRF_COOKIE_SECURE", "True").strip().lower() in {"1", "true", "yes", "on"}
+
 REST_FRAMEWORK = {
     "DEFAULT_AUTHENTICATION_CLASSES": [
         "rest_framework_simplejwt.authentication.JWTAuthentication",
